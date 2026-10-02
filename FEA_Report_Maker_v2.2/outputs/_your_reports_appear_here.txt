@@ -1,0 +1,2 @@
+A copy of every report you download is kept in this folder.
+(The download itself goes to the Downloads folder of your browser.)

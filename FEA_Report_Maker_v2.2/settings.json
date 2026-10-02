@@ -1,0 +1,51 @@
+{
+  "_help": "Open this file with Notepad to change the defaults. Save it, then restart the program.",
+  "port": 5055,
+  "report_no_pattern": "MWI/FEA/ACK-{job}/01",
+  "fos": 1.3,
+  "mm_format": "sig3",
+  "author": "Mech Well",
+  "cover_label": "FEA REPORT",
+  "units": "Units: Length = mm, Mass = tonnes, Time = second, Force = Newton",
+  "material_header": [
+    "Material",
+    "Item",
+    "Young's Modulus\n(MPa)",
+    "Poisson's\nRatio",
+    "Density\n(t/mm³)",
+    "Yield Stress\n(MPa)",
+    "Allowable Von-Mises\nStress (MPa)"
+  ],
+  "material": {
+    "material": "IS 2062",
+    "item": "Duct",
+    "E": "191400",
+    "nu": "0.3",
+    "rho": "7.8E-9"
+  },
+  "_help_engineering": "singularity_factor: a peak stress at or above this many times the YIELD strength makes the app ask how to report it. min_legend_pt: legend text on the slide below this size (points) is flagged as hard to read. mesh_limits: warning limits for the optional mesh statistics (ANSYS Meshing Help). assumption_library: the tick-list on the Assumptions card - edit it to match your own standard wording.",
+  "singularity_factor": 2.0,
+  "min_legend_pt": 5.0,
+  "show_utilisation": true,
+  "_help_v21": "missing_pictures: what to do when a picture does not exist - \"skip\" leaves that slide out (default), \"frame\" keeps an empty labelled frame to fill in PowerPoint (the page also remembers your choice). keep_copy_in_outputs: every downloaded report is also copied into the folder outputs.",
+  "missing_pictures": "skip",
+  "keep_copy_in_outputs": true,
+  "mesh_limits": {
+    "skew_max_warn": 0.9,
+    "skew_max_info": 0.75,
+    "skew_avg_info": 0.5,
+    "oq_min_warn": 0.1
+  },
+  "assumption_library": [
+    "Linear elastic, isotropic material behaviour (no plasticity).",
+    "Static loading: inertia and dynamic effects are neglected.",
+    "Small-deflection theory (geometric nonlinearity is not considered).",
+    "Contacts between parts are bonded (no sliding or separation).",
+    "Welds are not modelled in detail (parts are fully fused).",
+    "Bolts and pins are idealised (no pre-tension, no thread detail).",
+    "Pressure is applied uniformly on the loaded surfaces.",
+    "Self weight is included (standard earth gravity).",
+    "Temperature effects are not considered.",
+    "Buckling, fatigue and vibration are not assessed in this report."
+  ]
+}

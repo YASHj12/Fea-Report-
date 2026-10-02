@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FEA Report Maker</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231b304e'/%3E%3Cpath d='M7 22l5-8 4 5 4-9 5 12z' fill='%232a6fa6'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="top-in">
+    <div class="brand">
+      <div class="logo" aria-hidden="true"><svg viewBox="0 0 32 32" width="30" height="30"><path d="M5 24l7-11 5 6 5-10 5 15z" fill="#6fb1e6"/><path d="M5 24h22" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg></div>
+      <div><b>FEA Report Maker</b><span>Screenshots in &rarr; report out</span></div>
+    </div>
+    <ol class="steps" id="steps">
+      <li data-stage="upload" class="on"><i>1</i>Upload</li>
+      <li data-stage="review"><i>2</i>Review &amp; preview</li>
+      <li data-stage="done"><i>3</i>Download</li>
+    </ol>
+    <div class="chips" id="chips"></div>
+  </div>
+</header>
+
+<main id="main">
+  <div id="alert" class="alert" hidden></div>
+
+  <!-- ───────── step 1 : upload ───────── -->
+  <section id="s-upload">
+    <div class="hero">
+      <h1>Drop your ANSYS screenshots</h1>
+      <p>Any order, any file names. I sort them, read the numbers from the legends and write the first draft of the report.
+         You check it, fill in what only you know, and download the PowerPoint.</p>
+    </div>
+
+    <div id="resume"></div>
+
+    <label id="drop" class="drop" for="file">
+      <svg viewBox="0 0 48 48" width="54" height="54" aria-hidden="true"><path d="M24 33V12m0 0l-9 9m9-9l9 9" fill="none" stroke="#2a6fa6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 33v5a3 3 0 003 3h26a3 3 0 003-3v-5" fill="none" stroke="#2a6fa6" stroke-width="3" stroke-linecap="round"/></svg>
+      <b>Drag the pictures here</b>
+      <span>or click to choose them &middot; PNG or JPG &middot; put all pictures of the job in together<br>
+            (geometry, mesh, and the setup / deformation / stress picture of every load case)</span>
+      <input id="file" type="file" multiple accept="image/*,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.webp" hidden>
+    </label>
+    <div class="try"><button id="btn-example" class="link" type="button" hidden>No pictures at hand? Try it with the 9 example pictures</button></div>
+
+    <div class="how">
+      <div><i>1</i><b>I read the pictures</b><p>What each one is (geometry, mesh, setup, deformation, stress, section views), which load case it belongs to, the Max values and the support / load list. Every number is read twice.</p></div>
+      <div><i>2</i><b>You check the draft</b><p>Yellow boxes are things only you know: yield stress, support locations, client, report number. Suspicious results are flagged, never hidden. Every sentence can be edited.</p></div>
+      <div><i>3</i><b>I build the report</b><p>Same layout as your template. You see every slide as a preview while you work, and download the PowerPoint or a PDF with one click. Pictures you do not have are simply left out.</p></div>
+    </div>
+    <p class="priv"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M7 11V8a5 5 0 0110 0v3M6 11h12v9H6z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+      Everything stays on this computer. Nothing is uploaded to the internet.</p>
+  </section>
+
+  <!-- ───────── step 2 : review (built by app.js) ───────── -->
+  <section id="s-review" hidden></section>
+
+</main>
+
+<footer id="bar" class="bar" hidden>
+  <div class="bar-in">
+    <div id="bar-msg" class="bar-msg"></div>
+    <button id="btn-preview" class="secondary" type="button"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.7-7 10-7 10 7 10 7-3.7 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span class="lbl">Preview</span></button>
+    <button id="btn-pdf" class="secondary" type="button" data-dl="pdf"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg><span class="dlw">Download </span>PDF</button>
+    <button id="btn-pptx" class="primary" type="button" data-dl="pptx"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg><span class="dlw">Download </span>PowerPoint</button>
+  </div>
+</footer>
+
+<div id="busy" class="busy" hidden><div class="spin"></div><p id="busy-msg">Working&hellip;</p><p id="busy-extra" class="busy-extra"></p><button id="busy-cancel" class="secondary" type="button" hidden>Cancel</button></div>
+<div id="modal" class="modal" hidden></div>
+<div id="lightbox" class="lightbox" hidden><img alt="Picture, full size"></div>
+<div id="slidebox" class="lightbox slidebox" hidden>
+  <button class="sb-nav prev" type="button" aria-label="Previous slide">&#8249;</button>
+  <figure><img alt="Slide, full size"><figcaption></figcaption></figure>
+  <button class="sb-nav next" type="button" aria-label="Next slide">&#8250;</button>
+  <button class="sb-close" type="button" aria-label="Close">&#10005;</button>
+</div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
