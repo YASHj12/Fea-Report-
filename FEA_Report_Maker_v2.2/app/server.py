@@ -1169,7 +1169,9 @@ def build_cfg(p: dict, infos: list, out_path: Path) -> dict:
             m = e.get("match") or {}
             pos = e.get("pos") or "auto"
             side = pos if pos in ("left", "right") else (m.get("side") or "right")
-            if e.get("attach") and slot is not None and per_slot[slot] < mw.MAX_INSETS:
+            att = e.get("attach")
+            att = True if att is None and e.get("view_kind") in ("section", "detail") else bool(att)
+            if att and slot is not None and per_slot[slot] < mw.MAX_INSETS:
                 per_slot[slot] += 1
                 ins = {"image": path, "heading": ex["heading"], "parent_slot": slot, "side": side}
                 if ex.get("caption"):

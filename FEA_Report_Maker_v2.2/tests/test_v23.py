@@ -181,12 +181,13 @@ def main():
     npics = sum(1 for o in ops if o[0] == "pic")
     nlines = sum(1 for o in ops if o[0] == "line")
     check("A4 the results slide carries the zoom", npics >= 3, f"{npics} pictures on '{titles[res_i]}'")
-    check("A4 the leader line is drawn in the preview", nlines >= 1, f"{nlines} lines")
+    check("A4 no arrows or leader lines (company style)", nlines == 0, f"{nlines} lines")
     from pptx import Presentation
     prs = Presentation(str(d / "report.pptx"))
     shapes = [s.name for s in prs.slides[res_i].shapes]
-    check("A4 region mark + leader drawn", any("Detail region mark" in s for s in shapes)
-          and any("Detail leader" in s for s in shapes), str(shapes))
+    check("A4 red dashed region mark + boxed label under the inset",
+          any("Detail region mark" in s for s in shapes) and any("Inset label" in s for s in shapes)
+          and any("Inset label frame" in s for s in shapes), str(shapes))
     check("A4 no extra slide for the zoom", not any("zoom" in t.lower() or "additional" in t.lower() for t in titles),
           str(titles))
     im = deck.render(res_i, 1200)

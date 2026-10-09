@@ -33,6 +33,11 @@ NEW IN 2.3   (the seven changes you asked for)
     a teal rectangle and a leader line to the view in a column next to the plots. Up to three views per
     slide; more move to one extra slide and the notes say which. You can overrule everything: which
     parent, which side, or "no region mark".
+  * The results slide now looks like the company's own duct report: a zoomed or section view sits ON the
+    slide of its parent picture with a boxed label under it ("Zoomed view", "Section view"), the region it
+    belongs to is marked with a red dashed rectangle on the parent, no arrows, and the result statements
+    sit in thin boxes at the bottom. A view whose parent is known goes on that parent's slide unless you
+    explicitly choose "on a slide of its own".
   * Getting from the upload page to the review page is quick again: the heavy pixel work (finding a zoomed
     or section view inside its parent picture) is capped at a couple of seconds; whatever is not finished by
     then completes in the background and appears on the page a moment later, with a short message.

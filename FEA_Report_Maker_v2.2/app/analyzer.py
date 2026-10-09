@@ -1356,6 +1356,8 @@ def _region(info, by_id, candidates):
     m["found"] = True
     info["match"] = m
     info["match_pending"] = False
+    if info.get("view_kind") in ("section", "detail") and info.get("attach") is None:
+        info["attach"] = True                                  # a view with a parent belongs on the parent's slide
     return m
 
 

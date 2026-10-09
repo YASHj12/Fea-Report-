@@ -38,6 +38,10 @@ from PIL import Image, ImageChops, ImageFont
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE, PP_PLACEHOLDER
+try:
+    from pptx.enum.dml import MSO_LINE_DASH_STYLE as MSO_DASH
+except Exception:                                                  # noqa: BLE001
+    MSO_DASH = None
 from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
 from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.oxml import parse_xml
@@ -837,6 +841,14 @@ def _draw_panel(s, p, buf, sl):
     if p.get("caption") and sl["cap"]:
         cx, cy, cw, chh = sl["cap"]
         lines = balanced_lines(glue_units(p["caption"]), cw, p["csize"], True)
+        if p.get("boxcap"):                                    # company style: the statement sits in a thin box
+            fr = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, E(cx - 6.0), E(cy - 4.0), E(cw + 12.0), E(chh + 8.0))
+            fr.fill.solid()
+            fr.fill.fore_color.rgb = RGBColor.from_string("FFFFFF")
+            fr.line.color.rgb = RGBColor.from_string("404040")
+            fr.line.width = Pt(0.75)
+            fr.shadow.inherit = False
+            fr.name = "Caption box"
         runs = []
         for k, ln_ in enumerate(lines):
             runs += (["BR"] if k else []) + [R(ln_, p["csize"], True, p["ccolor"])]
@@ -974,7 +986,9 @@ def image_size(spec, autocrop=True):
 DET_W = 238.0                       # width of the detail column (pt)
 DET_GAP = 18.0
 DET_TOP, DET_BOT = STK_TOP, 430.0   # the detail column stays above the corner triangle (tri_left > 900 up there)
-DET_HEAD = 27.0                     # heading height above a detail picture (two lines at 10.5 pt)
+DET_HEAD = 0.0                      # (company style: no heading above an inset - the label sits BELOW it)
+DET_LAB = 17.0                      # height of the boxed label under an inset ("Zoomed view", "Section view")
+MARK_RED = "FF0000"                 # the company marks the region a zoom belongs to with a RED DASHED rectangle
 DET_CAP = 12.0                      # caption height under a detail picture
 MAX_INSETS = 3                      # more than this and the slide stops being readable -> the rest get their own slide
 
@@ -1052,20 +1066,38 @@ def build_detail_slide(prs, title, panels, insets, autocrop, mode="side", subtit
     boxes = _detail_column(det_box, len(insets))
     marks = []
     for ins, (bx0, by0, bx1, by1) in zip(insets, boxes):
-        hp = by0
-        py = by0 + DET_HEAD
-        if ins.get("heading"):
-            add_text(s, bx0, hp, bx1 - bx0, DET_HEAD, [P([R(ins["heading"], 10.5, True, TEAL_DK)], align="c")],
-                     wrap=True, name=f"{ins['heading']} heading")
         buf, size = load_image(ins["image"], autocrop)
-        cap_h = _cap_height(dict(ins, csize=10), bx1 - bx0)
-        x, y, w, h, _sc = fit(size, (bx0, py, bx1, by1 - ((CAP_GAP + cap_h) if cap_h else 0.0)), "c", "t")
+        lab_pre = ins.get("caption") or ins.get("label") or ""
+        if not lab_pre:
+            vk0 = ins.get("view_kind") or ("section" if "section" in (ins.get("heading") or "").lower() else "detail")
+            lab_pre = "Section view" if vk0 == "section" else ("Zoomed view" if vk0 == "detail" else "Inset view")
+            ph0 = _PH_RE.search(ins.get("heading") or "")
+            if ph0:
+                lab_pre += " " + ph0.group(0)
+        tw0 = min(bx1 - bx0, max(80.0, 5.4 * len(re.sub(r"\[.*?\]", "[...]", lab_pre)) + 26.0))
+        reserve = 9.0 + 12.5 * len(balanced_lines(glue_units(lab_pre), tw0 - 8.0, 10, True))
+        x, y, w, h, _sc = fit(size, (bx0, by0, bx1, by1 - reserve), "c", "t")
         place_picture(s, buf, (x, y, w, h), name=ins.get("name") or ins.get("heading") or "detail view",
                       alt=ins.get("heading") or "detail view")
-        if ins.get("caption") and cap_h:
-            lines = balanced_lines(glue_units(ins["caption"]), bx1 - bx0, 10, True)
-            add_text(s, bx0, y + h + 3.0, bx1 - bx0, cap_h + 4.0, [P([R(ln, 10, False, GREY)], align="c") for ln in lines],
-                     name=f"{ins.get('heading') or 'detail'} caption")
+        lab = ins.get("caption") or ins.get("label") or ""
+        if not lab:                                            # company style: a boxed label under the picture
+            vk = ins.get("view_kind") or ("section" if "section" in (ins.get("heading") or "").lower() else "detail")
+            lab = "Section view" if vk == "section" else ("Zoomed view" if vk == "detail" else "Inset view")
+            ph = _PH_RE.search(ins.get("heading") or "")
+            if ph:                                             # keep the yellow "please confirm" part visible
+                lab += " " + ph.group(0)
+        tw = min(bx1 - bx0, max(80.0, 5.4 * len(re.sub(r"\[.*?\]", "[...]", lab)) + 26.0))
+        nl = len(balanced_lines(glue_units(lab), tw - 8.0, 10, True))
+        lh = 5.0 + 12.5 * nl                                   # the box grows with its text (a yellow placeholder wraps)
+        lx, ly = x + (w - min(w, tw)) / 2.0, y + h + 3.0
+        fr = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, E(lx), E(ly), E(min(w, tw)), E(lh))
+        fr.fill.solid()
+        fr.fill.fore_color.rgb = RGBColor.from_string("FFFFFF")
+        fr.line.color.rgb = RGBColor.from_string("404040")
+        fr.line.width = Pt(0.75)
+        fr.shadow.inherit = False
+        fr.name = "Inset label frame"
+        add_text(s, lx, ly + 1.5, min(w, tw), lh - 3.0, [P([R(lab, 10, False, BODY)], align="c")], name="Inset label")
         marks.append((ins, (x, y, w, h)))
     for ins, drect in marks:                                   # mark the matched region on the parent + a leader line
         pi = ins.get("parent_slot", 0) if ins.get("parent_slot") in range(len(parent_rects)) else 0
@@ -1075,15 +1107,12 @@ def build_detail_slide(prs, title, panels, insets, autocrop, mode="side", subtit
         rx0, ry0, rx1, ry1 = _region_rect(parent_rects[pi], reg)
         box = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, E(rx0), E(ry0), E(max(6.0, rx1 - rx0)), E(max(6.0, ry1 - ry0)))
         box.fill.background()
-        box.line.color.rgb = RGBColor.from_string(TEAL)
-        box.line.width = Pt(1.25)
+        box.line.color.rgb = RGBColor.from_string(MARK_RED)
+        box.line.width = Pt(1.5)
+        if MSO_DASH is not None:
+            box.line.dash_style = MSO_DASH.DASH                # the company's own mark is a red dashed rectangle
         box.shadow.inherit = False
         box.name = "Detail region mark"
-        ln = s.shapes.add_connector(1, E(rx1 if side == "right" else rx0), E((ry0 + ry1) / 2),
-                                    E(drect[0] if side == "right" else drect[0] + drect[2]), E(drect[1] + drect[3] / 2))
-        ln.line.width = Pt(1.0)
-        ln.line.color.rgb = RGBColor.from_string(TEAL)
-        ln.name = "Detail leader"
     if note:
         _picture_note(s, note)
     return s
@@ -1110,9 +1139,9 @@ def panel_scales_detail(panels, insets, mode):
 def _build_results_plain(prs, title, case, autocrop, layout="side", pre=""):
     panels = [
         dict(box=RES_L_BOX, heading="Total deformation", image=case.get("deformation_image"), caption=case.get("deformation_caption"),
-             csize=16, ccolor=NAVY, cbox=(60.0, 480.0), alt="Total deformation contour plot"),
+             csize=16, ccolor=NAVY, cbox=(60.0, 480.0), boxcap=True, alt="Total deformation contour plot"),
         dict(box=RES_R_BOX, heading="Von-mises stress", image=case.get("stress_image"), caption=case.get("stress_caption"),
-             csize=14, ccolor=BODY, cbox=(496.0, 852.0), alt="Von-mises stress contour plot"),
+             csize=14, ccolor=BODY, cbox=(496.0, 852.0), boxcap=True, alt="Von-mises stress contour plot"),
     ]
     have = [p for p in panels if p["image"]]
     if not have:
@@ -1170,6 +1199,16 @@ def _build_view_slides_plain(prs, title, views, autocrop, what, layout="side", s
     return slides
 
 
+def _results_title(case, pre=""):
+    """company wording: 'Results : Von-Mises Stress Plot' (the duct report numbers it 5.1; we keep the case prefix)"""
+    parts = []
+    if case.get("deformation_image"):
+        parts.append("Total Deformation")
+    if case.get("stress_image"):
+        parts.append("Von-Mises Stress Plot")
+    return f"{pre}Results : {' & '.join(parts)}" if parts else f"{pre}Results"
+
+
 def build_results(prs, title, case, autocrop, layout="side", pre=""):
     """The results slide of one load case.  When detail / section views are ATTACHED to a result plot they are drawn on
     THIS slide, in a column next to their parent, with the matched region marked (see build_detail_slide) - the engineer
@@ -1179,10 +1218,10 @@ def build_results(prs, title, case, autocrop, layout="side", pre=""):
         return _build_results_plain(prs, title, case, autocrop, layout, pre)
     panels = [
         dict(box=RES_L_BOX, heading="Total deformation", image=case.get("deformation_image"),
-             caption=case.get("deformation_caption"), csize=16, ccolor=NAVY, cbox=(60.0, 480.0),
+             caption=case.get("deformation_caption"), csize=16, ccolor=NAVY, cbox=(60.0, 480.0), boxcap=True,
              alt="Total deformation contour plot"),
         dict(box=RES_R_BOX, heading="Von-mises stress", image=case.get("stress_image"),
-             caption=case.get("stress_caption"), csize=14, ccolor=BODY, cbox=(496.0, 852.0),
+             caption=case.get("stress_caption"), csize=14, ccolor=BODY, cbox=(496.0, 852.0), boxcap=True,
              alt="Von-mises stress contour plot"),
     ]
     have = [(k, p) for k, p in enumerate(panels) if p["image"]]
@@ -1453,7 +1492,8 @@ def build_report(cfg: dict, out: str | None = None) -> str:
         else:
             notes.append(f"Case {n}: setup slide left out (no setup picture and no list of loads and supports).")
         _build_extras(prs, pre, case, "bc", ac, lay_ext)
-        made = build_results(prs, case.get("results_title", f"{pre}Results"), case, ac, case.get("layout") or LAY.get("results", "side"), pre)
+        made = build_results(prs, case.get("results_title") or _results_title(case, pre), case, ac,
+                              case.get("layout") or LAY.get("results", "side"), pre)
         if not made:
             notes.append(f"Case {n}: results slide left out (no deformation and no stress picture).")
         elif not (case.get("deformation_image") and case.get("stress_image")):

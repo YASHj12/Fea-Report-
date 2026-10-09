@@ -164,6 +164,27 @@ types, matching), **C - Slide Craft** (the results slide with inset views), **D 
   costs 2.6 s (decoding the 4K files once) and 0.0 s warm; anything over the budget moves to the background.
   Tests: `U1b a spent budget defers matching instead of blocking`, `U1b the background pass places the view`.
 
+## Round 4b - the company's own duct report sets the house style (round 8 of the council)
+
+The engineer sent the company's reference report (a duct job, PowerPoint exported to PDF) and one of its
+results slides. **Note for the record: the PDF file itself did not arrive in the working folder - only the
+slide image did - so this round codifies what the slide shows; if the full PDF arrives, a later round can
+copy its section numbering and wording page by page.**
+
+What the reference slide ("5.1 Results : Von-mises Stress Plot") does, and the ruling for each point:
+
+| The company's slide | Ruling for this program |
+|---|---|
+| One slide carries the parent plot AND its zoomed / section views - never a separate page | **Confirmed as law** (P3). Additionally now: a section or zoom whose parent is known is attached to that parent's slide BY DEFAULT (attach = true unless the engineer explicitly chooses "a slide of its own"), so a view can no longer slip onto its own page by accident. |
+| The region a zoom belongs to is marked with a **red dashed rectangle** on the parent | Adopted: the mark is now red (FF0000), dashed, 1.5 pt, no fill. |
+| **No decorative arrows are required** - the engineer: "I am not saying you to add the arrows and all that thing" | The teal leader line is **removed**. Region mark + proximity + label are the pairing. |
+| Each inset carries a small **boxed label underneath** ("inset view", "Zoomed view") | Adopted: a white, thin-bordered box under every inset reads "Zoomed view" / "Section view" (or the caption the engineer typed); an unfilled location keeps its yellow "[location - please confirm]" inside that box. No heading above the picture any more - the inset gets the space instead. |
+| The result statement sits in a **boxed line** at the bottom ("Max. Von-Mises Stress = 1060 Mpa", the verdict sentence) | Adopted: the deformation and stress captions on the results slide are drawn inside thin white boxes. |
+| Title wording "Results : Von-mises Stress Plot" | Adopted: the results slide is titled "Results : Total Deformation & Von-Mises Stress Plot" (or whichever plots the case has), with the case prefix when a job has several cases. The company's "5.1" section numbering is NOT copied yet - our template numbers slides its own way (see Round 5). |
+
+Machine-checked: `A4 no arrows or leader lines (company style)`, `A4 red dashed region mark + boxed label
+under the inset`; the rendered example is `outputs/v23_results_slide.png`.
+
 ## Round 5 - what the council still owes the engineer (known limits, stated plainly)
 
 1. **Without Tesseract installed** the app runs in manual mode: title blocks are not read from pixels, so
