@@ -33,6 +33,10 @@ NEW IN 2.3   (the seven changes you asked for)
     a teal rectangle and a leader line to the view in a column next to the plots. Up to three views per
     slide; more move to one extra slide and the notes say which. You can overrule everything: which
     parent, which side, or "no region mark".
+  * The load case is read from the BOLD FIRST LINE of each screenshot (the case name you print on the
+    picture): alike names are one case even when OCR misspells them, different names stay apart, and cases
+    with alike names are presented series by series.  Every result picture states its maximum on the page
+    ('Max. ... = value unit'); where nothing could be read the page asks in yellow instead of guessing.
   * The results slide now looks like the company's own duct report: a zoomed or section view sits ON the
     slide of its parent picture with a boxed label under it ("Zoomed view", "Section view"), the region it
     belongs to is marked with a red dashed rectangle on the parent, no arrows, and the result statements

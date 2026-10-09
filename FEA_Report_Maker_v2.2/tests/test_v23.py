@@ -123,6 +123,31 @@ def main():
     decks = {i["case"]: i["deck"] for i in fake}
     check("A3 two decks both called A stay apart", len(d["cases"]) == 2 and decks[1] != decks[2], str(decks))
 
+    # ── C1: the BOLD FIRST LINE of the screenshot is the case name; alike names are one case, series-wise order ──
+    hP = analyzer.parse_header(["A: 6203_KCP_MLD_Blade_PRESSURE", "Total Deformation", "Type: Total Deformation",
+                                "Unit: mm", "Time: 1 s"])
+    hT = analyzer.parse_header(["A: 6203_KCP_MLD_Blade_THERMAL", "Temperature", "Type: Temperature", "Unit: C", "Time: 1 s"])
+    hN = analyzer.parse_header(["6203_KCP_MLD_Blade_PRESSURE", "Total Deformation", "Type: Total Deformation", "Unit: mm"])
+    check("C1 the bold first line is read as the case name",
+          hP["case_name"] == "6203_KCP_MLD_Blade_PRESSURE" and hT["case_name"].endswith("THERMAL")
+          and hN["case_name"] == "6203_KCP_MLD_Blade_PRESSURE", str((hP["case_name"], hT["case_name"], hN["case_name"])))
+    P, PT, T = "6203_KCP_MLD_Blade_PRESSURE", "6203_KCP_MLD_Blade_PRESSUER", "6203_KCP_MLD_Blade_THERMAL"
+    fake2 = [dict(id=k, name=f"q{k}", path="", role=rl, letter=lt, model=mo, deck=analyzer.deck_key(mo), notes=[],
+                  case_name=mo, max=None, legend_values=[], bc_draft=[], bc_legend=[], headline_bc=["", ""], unit=None,
+                  legend_px=None, red_px=None, edge_density=None, z_dir=None, gravity=None, dup_of=None,
+                  user_set=False, view_kind="", rkind="", result_kind="", parent=None, attach=None, pos="auto",
+                  match=None, match_ambiguous=False)
+             for k, (rl, lt, mo) in enumerate([("deformation", "A", P), ("stress", "A", PT), ("deformation", "A", T)], 1)]
+    d2 = analyzer.finish(fake2)
+    withst = [c for c in d2["cases"] if c["stress_id"] is not None]
+    check("C1 a misspelled same case name stays ONE case, a different name its own",
+          len(d2["cases"]) == 2 and len(withst) == 1 and withst[0]["def_id"] is not None,
+          json.dumps([(c["n"], c["name"]) for c in d2["cases"]])[:200])
+    check("C1 cases of alike names form a series and read in series order",
+          len(d2["cases"]) == 2 and d2["cases"][0]["series"] and d2["cases"][0]["series"] == d2["cases"][1]["series"]
+          and d2["cases"][0]["name"].endswith(("PRESSURE", "PRESSUER")) and d2["cases"][1]["name"].endswith("THERMAL"),
+          json.dumps([(c["n"], c["name"], c["series"]) for c in d2["cases"]])[:250])
+
     # ── A2b: a file name that merely mentions "structural" / "thermal" is not a result type ──
     r = cli.post("/api/analyze", data={"files": [(open(EX / "image-5.png", "rb"), "SETUP STRUCTURAL.png"),
                                                  (open(EX / "image-7.png", "rb"), "thermal setup.png")]},
@@ -190,6 +215,15 @@ def main():
           and any("Inset label frame" in s for s in shapes), str(shapes))
     check("A4 no extra slide for the zoom", not any("zoom" in t.lower() or "additional" in t.lower() for t in titles),
           str(titles))
+
+    # ── C2/C3: the case is named by its bold line, and every threshold's maximum is ON the page ──
+    check("C2 the case is named by the bold first line of its screenshots", c1["name"] == "6203_KCP_MLD_Blade_PRESSURE",
+          c1["name"])
+    txts = "\n".join(s.text_frame.text for s in prs.slides[res_i].shapes if s.has_text_frame)
+    check("C3 both maxima are stated on the results slide", "2.42" in txts and "120" in txts, txts[:400])
+    check("C3 the inset label states the maximum read from its own legend", "Max 96 MPa" in txts, txts[:400])
+    cap = server._max_caption({"result_kind": "Maximum Principal Stress", "max": 74.2, "unit": "MPa"})
+    check("C3 a solo additional view states its maximum, company style", cap == "Max. Principal Stress = 74.2 MPa", cap)
     im = deck.render(res_i, 1200)
     out = ROOT / "outputs" / "v23_results_slide.png"
     im.save(out)

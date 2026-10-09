@@ -490,6 +490,20 @@ def _clean_kind(txt: str) -> str:
     return re.sub(r"\s+", " ", t).strip(" -.")[:60]
 
 
+def _case_line(line: str):
+    """The BOLD FIRST LINE of an ANSYS screenshot is the name of the load case - the engineer prints the case name on
+    the picture itself.  When the 'A:' letter was not readable the whole first line still names the case, so keep it
+    (trimmed; result chrome like 'Type:' / 'Unit:' / '0.085 Max' is never a case name)."""
+    t = re.sub(r"\s+", " ", (line or "").strip())[:90]
+    if not t:
+        return None
+    if re.match(r"^(type|unit|time|date|model|mesh|node|element|\d|[0-9.e+\-]+\s*(max|min))\b", t, re.I):
+        return None
+    if "_" in t or len(t.split()) >= 2:
+        return t
+    return None
+
+
 def parse_header(lines):
     """ANSYS title block -> letter, model, deck, role, unit, result kind, headline.
 
@@ -521,7 +535,10 @@ def parse_header(lines):
                 letter, model = m.group(1), re.sub(r"(\s+[a-z]{1,2})+$", "", m.group(2).strip())
                 out["letter_conf"] = "low"
                 break
-    out["letter"], out["model"] = letter, model
+    out["letter"], out["case_name"] = letter, model
+    if letter is None and lines:
+        out["case_name"] = _case_line(lines[0])          # no readable letter: the bold line still names the case
+    out["model"] = model
     if letter is not None:
         out["has_header"] = True
     joined = " ".join(lines)
@@ -644,6 +661,11 @@ def sim(a, b) -> float:
     """0..1 similarity of two strings, tolerant of spelling and OCR mistakes: the better of the plain and the
     OCR-folded comparison."""
     return max(_sim1(_norm_name(a), _norm_name(b)), _sim1(_ocr_fold(a), _ocr_fold(b)))
+
+
+def _tok_j(a, b):
+    ta, tb = set(_tokens(a)), set(_tokens(b))
+    return len(ta & tb) / len(ta | tb) if (ta and tb) else 0.0
 
 
 def _fuzzy_in(word: str, text: str, thr: float = 0.8) -> bool:
@@ -1106,7 +1128,7 @@ def analyze_manual_one(path, idx: int, name=None, why: str = "ocr") -> dict:
             "bc_legend": [], "bc_draft": [], "headline_bc": ["", ""], "z_dir": None, "red_px": None, "edge_density": None,
             "result_kind": rkind_label(rk) if rk else "", "rkind": rk or "", "view_kind": vk or "", "name_target": tgt or "",
             "parent": None, "attach": None, "pos": "auto", "match": None, "match_ambiguous": False,
-            "legend_px": None, "gravity": None, "dup_of": None, "user_set": False, "manual": True,
+            "case_name": "", "legend_px": None, "gravity": None, "dup_of": None, "user_set": False, "manual": True,
             "hash": hashlib.md5(Path(path).read_bytes()).hexdigest()}
     if role is None:
         info["notes"].append("I could not tell what this picture is - please choose it in the list." if why == "ocr"
@@ -1137,7 +1159,7 @@ def analyze_one(path, idx: int, name=None) -> dict:
             "analysis": "", "header": [], "notes": [], "unit": None, "max": None, "min": None, "legend_values": [],
             "bc_legend": [], "bc_draft": [], "headline_bc": ["", ""], "z_dir": None, "red_px": None, "edge_density": None,
             "result_kind": "", "rkind": "", "view_kind": "", "name_target": "", "parent": None, "attach": None,
-            "pos": "auto", "match": None, "match_ambiguous": False, "legend_px": None, "gravity": None,
+            "case_name": "", "pos": "auto", "match": None, "match_ambiguous": False, "legend_px": None, "gravity": None,
             "hash": hashlib.md5(Path(path).read_bytes()).hexdigest(), "dup_of": None, "user_set": False}
 
     hdr_lines = []
@@ -1147,7 +1169,8 @@ def analyze_one(path, idx: int, name=None) -> dict:
         if h["has_header"] or h["role"]:
             break
     info.update(letter=h["letter"], letter_conf=h["letter_conf"], model=h["model"], header=hdr_lines[:5], unit=h["unit"],
-                result_kind=h["result_kind"], rkind=h["rkind"], headline=h["headline"], deck=h["deck"], analysis=h["analysis"])
+                result_kind=h["result_kind"], rkind=h["rkind"], headline=h["headline"], deck=h["deck"], analysis=h["analysis"],
+                case_name=h["case_name"] or "")
 
     vk, tgt, rk_name = guess_detail_from_name(info["name"])       # the file name says "section" / "zoom" / a result type
     info["view_kind"], info["name_target"] = vk or "", tgt or ""
@@ -1411,9 +1434,12 @@ def assign_cases(infos):
                     "ambiguous": bool(p.get("match_ambiguous")),
                 })
         bc, d, s = by_id.get(c["bc_id"]), by_id.get(c["def_id"]), by_id.get(c["stress_id"])
-        name, sub = (bc["headline_bc"] if bc else ("", ""))
         pxs = [x["legend_px"] for x in (bc, d, s) if x and x.get("legend_px")]
         anchor = bc or d or s or {}
+        cname = (anchor.get("case_name") or "").strip() or (anchor.get("model") or "").strip()
+        name, sub = (bc["headline_bc"] if bc else ("", ""))
+        if cname:                                        # the bold first line of the screenshot IS the case name
+            name, sub = cname, (name or sub)
         c.update(
             name=name or f"Load Case {n}", subtitle=sub or "(Self Weight + Pressure)", short_name=name or f"Load Case {n}",
             bc_items=[x["text"] for x in bc["bc_draft"]] if bc else [], bc_legend=[x["legend"] for x in bc["bc_draft"]] if bc else [],
@@ -1422,6 +1448,7 @@ def assign_cases(infos):
             stress_red_px=s["red_px"] if s else None, stress_legend=s["legend_values"] if s else [],
             gravity=(bc or {}).get("gravity"), legend_px=(statistics.median(pxs) if pxs else None),
             letter=anchor.get("letter"), model=anchor.get("model"), deck=anchor.get("deck") or "",
+            series=anchor.get("series") or "", case_name=cname,
             deck_id=anchor.get("deck_id"), analysis=anchor.get("analysis") or "")
         out.append(c)
     return out
@@ -1467,35 +1494,54 @@ def finish(infos, settings=None):
     cases = []
     for d in decks:
         members = d["members"]
-        letters = sorted({i["letter"] for i in members if i["letter"]})
-        by_letter = {}
-        for i in members:
-            if i["letter"] in letters:
-                by_letter.setdefault(i["letter"], []).append(i)
-            elif not letters or len(letters) == 1:
-                by_letter.setdefault(letters[0] if letters else "", []).append(i)
-            else:                                   # no letter, several cases: follow the closest title in this deck
-                best, bs = None, 0.0
-                for L, g in by_letter.items():
-                    for m in g:
-                        s = max(deck_sim(i.get("model") or "", m.get("model") or ""),
-                                sim(i.get("headline") or "", m.get("headline") or "") * 0.9)
+        # The CASE NAME is the bold first line of the screenshot ("A: 6203_KCP_MLD_Blade_PRESSURE"): pictures whose case
+        # names read alike (OCR-tolerant) are ONE load case even when the letter was misread - and different case names
+        # stay DIFFERENT cases even when ANSYS printed the same letter twice.  The letter only helps when a picture has
+        # no readable case name at all.
+        clusters = []                                    # [{"name", "letter", "model", "head", "members"}]
+        for i in sorted(members, key=lambda x: x["id"]):
+            cn = (i.get("case_name") or "").strip()
+            hit = None
+            if cn:
+                for cl in clusters:
+                    if cl["name"] and (sim(cn, cl["name"]) >= 0.80 or _tok_j(cn, cl["name"]) >= 0.80):
+                        hit = cl
+                        break
+            else:
+                for cl in clusters:
+                    if i.get("letter") and cl["letter"] == i["letter"]:
+                        hit = cl
+                        break
+                if hit is None:
+                    best, bs = None, 0.0
+                    for cl in clusters:
+                        s = max(deck_sim(i.get("model") or "", cl["model"]),
+                                sim(i.get("headline") or "", cl["head"]) * 0.9)
                         if s > bs:
-                            best, bs = L, s
-                if best is not None and bs >= 0.55:
-                    by_letter[best].append(i)
-                    i["notes"].append(f"No load-case letter was readable in the title, so this picture was put with case '{best}' "
-                                      f"(the titles are {bs * 100:.0f} % alike). Check it.")
-                else:
-                    i["case_uncertain"] = "letter"   # the engineer assigns it (warned in build_draft)
-        for L in sorted(by_letter):
-            g = by_letter[L]
+                            best, bs = cl, s
+                    if best is not None and bs >= 0.55:
+                        hit = best
+                        i["notes"].append(f"No load-case name was readable in the title, so this picture was put with case "
+                                          f"'{best['name'] or best['letter']}' (the titles are {bs * 100:.0f} % alike). Check it.")
+                    elif not any(cl["name"] for cl in clusters):
+                        hit = clusters[0] if clusters else None   # no readable case names in this deck: keep them together
+                    else:
+                        i["case_uncertain"] = "letter"   # the engineer assigns it (warned in build_draft)
+            if hit is None:
+                hit = {"name": cn, "letter": i.get("letter") or "", "model": i.get("model") or "",
+                       "head": i.get("headline") or "", "members": []}
+                clusters.append(hit)
+            hit["members"].append(i)
+            hit["name"] = hit["name"] or cn
+            hit["letter"] = hit["letter"] or (i.get("letter") or "")
+        for cl in clusters:
+            g = cl["members"]
             bcs = sorted([i for i in g if i["role"] == "bc"], key=lambda i: (_norm_model(i["model"]), i["id"]))
             if len(bcs) < 2:
                 cases.append(g)
                 continue
-            # two setup pictures with the same letter inside one deck: still two models - every other picture follows
-            # the setup picture whose model name it resembles most
+            # two setup pictures with the same case name inside one deck: still two models - every other picture
+            # follows the setup picture whose model name it resembles most
             sub = [[b] for b in bcs]
             for i in g:
                 if i["role"] == "bc":
@@ -1504,6 +1550,38 @@ def finish(infos, settings=None):
                                                            _common_prefix(_norm_model(i["model"]), _norm_model(bcs[k]["model"])), -k))
                 sub[best].append(i)
             cases.extend(sub)
+    # --- series: cases whose names are alike form one SERIES and are presented together, in name order, so the
+    #     report reads "pressure cases, then thermal cases" instead of upload order (the engineer's ruling)
+    reps = []
+    for g in cases:
+        names = [n for n in (i.get("case_name") or i.get("model") or "" for i in g) if n]
+        reps.append(max(names, key=len) if names else "")
+    labels, sid_of = [], []
+    for nm in reps:
+        at = None
+        for si, lab in enumerate(labels):
+            if nm and (sim(nm, lab) >= 0.55 or _tok_j(nm, lab) >= 0.60):
+                at = si
+                break
+        if at is None:
+            labels.append(nm)
+            sid_of.append(len(labels) - 1)
+        else:
+            sid_of.append(at)
+    pref = []
+    for si in range(len(labels)):
+        names = [reps[k] for k in range(len(cases)) if sid_of[k] == si and reps[k]]
+        toks = _tokens(names[0]) if names else []
+        for nme in names[1:]:
+            toks = [t for t, u in zip(toks, _tokens(nme)) if t == u]
+        pref.append(" ".join(toks) if toks else (labels[si] or f"Series {si + 1}"))
+    order = sorted(range(len(cases)), key=lambda k: (sid_of[k], _norm_name(reps[k]), k))
+    cases = [cases[k] for k in order]
+    ser = [pref[sid_of[k]] for k in order]
+    if len(cases) > 1:
+        for g, sl in zip(cases, ser):
+            for i in g:
+                i["series"] = sl
     for n, g in enumerate(cases, 1):
         for i in g:
             i["case"] = n

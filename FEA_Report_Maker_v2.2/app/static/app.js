@@ -661,7 +661,7 @@ function picturesCard() {
     const isCase = CASE_ROLES.has(img.role);
     const cs = h('select', { class: 'cs', disabled: !isCase, 'data-need': isCase ? 'req' : null, 'data-label': `Load case of ${img.name}`, 'aria-label': `Load case of ${img.name}` },
       isCase && !img.case ? h('option', { value: '', selected: true }, 'Choose ...') : null,
-      Array.from({ length: 12 }, (_, i) => i + 1).map(n => h('option', { value: n, selected: n === img.case }, 'Case ' + n)));
+      caseOptions(img.case));
     role.addEventListener('change', () => {
       const [r, vk, rk] = role.value.split('|');
       img.role = r; img.view_kind = vk || ''; img.rkind = rk || '';
@@ -928,6 +928,21 @@ function assumptionsCard() {
 }
 
 // ----- load cases
+function caseOptions(cur) {
+  // The case names are the bold first lines of the screenshots; cases whose names are alike form one SERIES and are
+  // offered together (optgroup), in the order the report presents them.
+  const ser = new Map();
+  const all = S.cases || [];
+  all.forEach(c => { const k = (all.length > 1 ? (c.series || '') : '').trim(); if (!ser.has(k)) ser.set(k, []); ser.get(k).push(c); });
+  const out = [];
+  const opt = c => h('option', { value: c.n, selected: c.n === cur }, `Case ${c.n}: ${c.name || '(unnamed)'}`);
+  ser.forEach((list, k) => {
+    if (k) out.push(h('optgroup', { label: `Series: ${k}` }, list.map(opt)));
+    else list.forEach(c => out.push(opt(c)));
+  });
+  return out;
+}
+
 function caseCard(c, k) {
   const bcBox = h('div'), noteBox = h('div'), xBox = h('div', { class: 'xlist', 'data-extras': c.n }), obsBox = h('div', { 'data-obsbox': c.n, class: 'in', style: 'padding:0;display:grid;gap:12px' });
   renderLines(c, 'bc', bcBox); renderLines(c, 'notes', noteBox); renderExtras(c, xBox);
@@ -948,7 +963,8 @@ function caseCard(c, k) {
   const ev = (key, label, hint) => h('label', { class: 'f' }, h('span', {}, label, h('span', { class: 'opt' }, '  (optional)')), inp(c, key, { label: `Case ${c.n}: ${label}`, onchange: scheduleDerive }), hint ? h('small', {}, hint) : null);
 
   return h('section', { class: 'card', 'data-casecard': c.n },
-    h('div', { class: 'case-head' }, h('h2', {}, h('span', { class: 'num' }, String(7 + k)), `Load case ${c.n}`), h('span', { class: 'badge', 'data-badge': c.n, hidden: true })),
+    h('div', { class: 'case-head' }, h('h2', {}, h('span', { class: 'num' }, String(7 + k)), `Load case ${c.n}`,
+      (c.series || '') ? h('small', {}, `  (series: ${c.series})`) : null), h('span', { class: 'badge', 'data-badge': c.n, hidden: true })),
     h('div', { class: 'casepics' },
       h('figure', {}, thumb(c.bc_id, 'thumb big', 300), h('figcaption', {}, 'Setup')),
       h('figure', {}, thumb(c.def_id, 'thumb big', 300), h('figcaption', {}, 'Deformation')),

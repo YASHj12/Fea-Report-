@@ -185,6 +185,36 @@ What the reference slide ("5.1 Results : Von-mises Stress Plot") does, and the r
 Machine-checked: `A4 no arrows or leader lines (company style)`, `A4 red dashed region mark + boxed label
 under the inset`; the rendered example is `outputs/v23_results_slide.png`.
 
+## Round 4c - the case name and its maximum live ON the screenshot (round 9 of the council)
+
+The engineer corrected a real confusion: "all load cases are in same case". The program used to decide the
+load case from the ANSYS letter and the deck; the engineer's own convention is simpler and stronger:
+
+1. **The bold first line of every screenshot IS the name of the load case** - the engineer prints the case
+   name on the picture ("A: 6203_KCP_MLD_Blade_PRESSURE"). The program now reads that line as `case_name`
+   (and still reads it when the "A:" letter is not readable at all).
+2. **The maximum of the colour legend belongs on the report page** - the company's slides carry boxed
+   "Max. ..." lines, so every result picture now states its own maximum: the two main captions keep the
+   Max line even when a verdict sentence exists (both lines, one box), a zoom/section label reads
+   "Zoomed view - Max 96 MPa", and a result plot on a slide of its own gets "Max. Principal Stress = 74.2 MPa".
+   Where no number could be read the page asks for it in yellow: "[max not entered]".
+3. **Sort cases by similar name, series-wise**: pictures whose case names read alike (OCR-tolerant,
+   similarity >= 0.80 or token overlap >= 0.80) are ONE load case - a misspelling no longer splits a case, and
+   two different case names no longer collapse into one (the old letter-only rule did both errors). Cases whose
+   names are alike then form a SERIES (common name prefix, e.g. "6203 KCP MLD Blade") and are numbered and
+   presented series by series; the Pictures table offers them grouped under "Series: ..." and each case card
+   shows its series.
+
+Machine-checked: `C1 the bold first line is read as the case name`, `C1 a misspelled same case name stays ONE
+case, a different name its own`, `C1 cases of alike names form a series and read in series order`,
+`C2 the case is named by the bold first line of its screenshots`, `C3 both maxima are stated on the results
+slide`, `C3 the inset label states the maximum read from its own legend`, `C3 a solo additional view states
+its maximum, company style`.
+
+Honest limit: the numbers come from the picture reader (Tesseract). On a machine without it the case names
+cannot be read either, so pictures stay together as before and every missing maximum shows as a yellow
+"[max not entered]" on the page and as an empty box on the review screen - nothing is invented.
+
 ## Round 5 - what the council still owes the engineer (known limits, stated plainly)
 
 1. **Without Tesseract installed** the app runs in manual mode: title blocks are not read from pixels, so

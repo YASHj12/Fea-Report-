@@ -986,6 +986,22 @@ def image_size(spec, autocrop=True):
 DET_W = 238.0                       # width of the detail column (pt)
 DET_GAP = 18.0
 DET_TOP, DET_BOT = STK_TOP, 430.0   # the detail column stays above the corner triangle (tri_left > 900 up there)
+def _ins_label(ins):
+    """The boxed label under an inset (company style): the view word or the typed caption, the yellow placeholder,
+    and - because the company states every threshold on the page - the maximum read from this picture's legend."""
+    lab = (ins.get("caption") or ins.get("label") or "").strip()
+    if lab:
+        return lab
+    vk = ins.get("view_kind") or ("section" if "section" in (ins.get("heading") or "").lower() else "detail")
+    lab = "Section view" if vk == "section" else ("Zoomed view" if vk == "detail" else "Inset view")
+    ph = _PH_RE.search(ins.get("heading") or "")
+    if ph:                                             # keep the yellow "please confirm" part visible
+        lab += " " + ph.group(0)
+    if ins.get("max") is not None:
+        lab += f" \u2013 Max {ins['max']:g} {ins.get('unit') or ''}".rstrip()
+    return lab
+
+
 DET_HEAD = 0.0                      # (company style: no heading above an inset - the label sits BELOW it)
 DET_LAB = 17.0                      # height of the boxed label under an inset ("Zoomed view", "Section view")
 MARK_RED = "FF0000"                 # the company marks the region a zoom belongs to with a RED DASHED rectangle
@@ -1067,25 +1083,13 @@ def build_detail_slide(prs, title, panels, insets, autocrop, mode="side", subtit
     marks = []
     for ins, (bx0, by0, bx1, by1) in zip(insets, boxes):
         buf, size = load_image(ins["image"], autocrop)
-        lab_pre = ins.get("caption") or ins.get("label") or ""
-        if not lab_pre:
-            vk0 = ins.get("view_kind") or ("section" if "section" in (ins.get("heading") or "").lower() else "detail")
-            lab_pre = "Section view" if vk0 == "section" else ("Zoomed view" if vk0 == "detail" else "Inset view")
-            ph0 = _PH_RE.search(ins.get("heading") or "")
-            if ph0:
-                lab_pre += " " + ph0.group(0)
+        lab_pre = _ins_label(ins)
         tw0 = min(bx1 - bx0, max(80.0, 5.4 * len(re.sub(r"\[.*?\]", "[...]", lab_pre)) + 26.0))
         reserve = 9.0 + 12.5 * len(balanced_lines(glue_units(lab_pre), tw0 - 8.0, 10, True))
         x, y, w, h, _sc = fit(size, (bx0, by0, bx1, by1 - reserve), "c", "t")
         place_picture(s, buf, (x, y, w, h), name=ins.get("name") or ins.get("heading") or "detail view",
                       alt=ins.get("heading") or "detail view")
-        lab = ins.get("caption") or ins.get("label") or ""
-        if not lab:                                            # company style: a boxed label under the picture
-            vk = ins.get("view_kind") or ("section" if "section" in (ins.get("heading") or "").lower() else "detail")
-            lab = "Section view" if vk == "section" else ("Zoomed view" if vk == "detail" else "Inset view")
-            ph = _PH_RE.search(ins.get("heading") or "")
-            if ph:                                             # keep the yellow "please confirm" part visible
-                lab += " " + ph.group(0)
+        lab = _ins_label(ins)                                  # company style: a boxed label under the picture
         tw = min(bx1 - bx0, max(80.0, 5.4 * len(re.sub(r"\[.*?\]", "[...]", lab)) + 26.0))
         nl = len(balanced_lines(glue_units(lab), tw - 8.0, 10, True))
         lh = 5.0 + 12.5 * nl                                   # the box grows with its text (a yellow placeholder wraps)

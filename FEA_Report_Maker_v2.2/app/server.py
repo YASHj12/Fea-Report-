@@ -555,6 +555,19 @@ def _clean(s):
     return re.sub(r"\s+", " ", str(s or "")).strip().rstrip(".")
 
 
+def _max_caption(e):
+    """Company style: every result picture states its own maximum on the page ('Max. Von-Mises Stress = 1060 MPa').
+    The name is the result type with a leading 'Maximum/'Max' trimmed, so the line never reads 'Max. Maximum ...'."""
+    nm = (e.get("result_kind") or "").strip()
+    nm = re.sub(r"^(maximum|minimum|max|min)\.?\s+", "", nm, flags=re.I) or (e.get("heading") or "value")
+    v, unit = e.get("max"), (e.get("unit") or "").strip()
+    try:
+        vs = mw.fmt_mm(v) if unit.lower() == "mm" else f"{float(v):g}"
+    except (TypeError, ValueError):
+        vs = str(v)
+    return f"Max. {nm} = {vs} {unit}".strip()
+
+
 def compose_case(c: dict, ctx: dict) -> dict:
     """All the wording of one load case + the verdict.  The template's sentences (mw.derive_case_texts) are the starting
     point, so an ordinary job gets exactly the template wording; extras are added only when the engineer asked for them.
@@ -567,6 +580,10 @@ def compose_case(c: dict, ctx: dict) -> dict:
     if basis not in ("", "asis", "singularity", "refine"):
         basis = ""
     texts = {"deformation_caption": "", "stress_caption": "", "observations": [], "conclusion": ""}
+    if c.get("def_id") and d is None:                  # the page must still ask for the threshold, in yellow
+        texts["deformation_caption"] = "Maximum Total Deformation \u2013 [max not entered] mm"
+    if c.get("stress_id") and sx is None:
+        texts["stress_caption"] = "Maximum Von-Mises Stress \u2013 [max not entered] MPa"
     res = {"texts": texts, "tier": tier, "exceeds": None, "needs_basis": tier == "suspect" and basis == "", "basis": basis,
            "cell_def": "", "cell_stress": "", "def_fail": False, "util": None, "adequate": None}
     mw._MM_MODE["mode"] = SETTINGS["mm_format"]
@@ -588,8 +605,9 @@ def compose_case(c: dict, ctx: dict) -> dict:
         texts["observations"] = first
         return res
     fs, fm = mw.fmt_mpa(sx), mw.fmt_mpa
+    maxline = f"Maximum Von-Mises Stress \u2013 {fs} MPa"
     if allow is None:                                      # no allowable stress: neutral wording, the verdict is left to the engineer
-        texts["stress_caption"] = f"Maximum Von-Mises Stress \u2013 {fs} MPa"
+        texts["stress_caption"] = maxline
         res["cell_stress"] = f"{fs} MPa"
         bl = first + [f"Von-Mises stress in the {obj} is {fs} MPa."]
         if loc_str:
@@ -664,6 +682,8 @@ def compose_case(c: dict, ctx: dict) -> dict:
     texts["observations"] = bullets
     texts["conclusion"] = conclusion
     res["adequate"] = adequate
+    if texts["stress_caption"] and not texts["stress_caption"].startswith("Maximum"):
+        texts["stress_caption"] = maxline + "\n" + texts["stress_caption"]   # company style: Max line AND verdict line
     return res
 
 
@@ -1139,7 +1159,7 @@ def build_cfg(p: dict, infos: list, out_path: Path) -> dict:
         cp = compose_case(c, ctx)
         comps.append(cp)
         case = {
-            "name": name, "subtitle": (c.get("subtitle") or "").strip(),
+            "name": name, "subtitle": (c.get("subtitle") or "").strip(), "series": (c.get("series") or "").strip(),
             "short_name": (c.get("short_name") or "").strip() or name,
             "bc_items": [t.strip() for t in (c.get("bc_items") or []) if str(t).strip()],
             "notes": [t.strip() for t in (c.get("notes") or []) if str(t).strip()],
@@ -1163,8 +1183,11 @@ def build_cfg(p: dict, infos: list, out_path: Path) -> dict:
             if e.get("kind") not in ("bc", "deformation", "stress", "other") or not path:
                 continue
             ex = {"kind": e["kind"], "heading": (e.get("heading") or "").strip() or "Additional view", "image": path}
-            if (e.get("caption") or "").strip():
-                ex["caption"] = e["caption"].strip()
+            ucap = (e.get("caption") or "").strip()
+            if ucap:
+                ex["caption"] = ucap
+            elif e.get("max") is not None:
+                ex["caption"] = _max_caption(e)          # the threshold's maximum belongs on the page
             slot = slot_of.get(e.get("parent"))
             m = e.get("match") or {}
             pos = e.get("pos") or "auto"
@@ -1174,8 +1197,10 @@ def build_cfg(p: dict, infos: list, out_path: Path) -> dict:
             if att and slot is not None and per_slot[slot] < mw.MAX_INSETS:
                 per_slot[slot] += 1
                 ins = {"image": path, "heading": ex["heading"], "parent_slot": slot, "side": side}
-                if ex.get("caption"):
-                    ins["caption"] = ex["caption"]
+                if ucap:
+                    ins["caption"] = ucap
+                if e.get("max") is not None:
+                    ins["max"], ins["unit"] = e.get("max"), e.get("unit") or ""
                 if m.get("box") and pos != "nomark":
                     ins["region"] = m["box"]
                 insets.append(ins)
