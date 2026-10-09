@@ -238,6 +238,9 @@ MATCH_MIN = 0.50                        # below this the two pictures are not re
 MATCH_LEVELS = (112, 240)               # coarse -> fine pyramid width of the parent's model viewport
 MATCH_RATIOS = (0.10, 0.14, 0.20, 0.28, 0.38, 0.50, 0.65, 0.85)   # detail width as a fraction of the parent's width
 MATCH_BUDGET = 5.0                      # seconds for ONE parent / detail pair - never block the page
+MATCH_SYNC = 2.5                        # seconds the WHOLE matching may hold up "Next: read the pictures"; the rest finishes in the background
+MATCH_MAX_W = 1600                      # matching never needs more pixels than this (a 4K screenshot is resized once, then cached)
+MATCH_DEADLINE = {"at": None}           # set by the server while the page must not be kept waiting
 MIN_WIN = 14                            # px - a smaller window is mostly background and matches anything
 _MATCH_CACHE: dict = {}
 _RGB_CACHE: dict = {}
@@ -255,12 +258,32 @@ def _rgb(path):
     return _RGB_CACHE[key]
 
 
+_FIT_CACHE = {}
+
+
+def _rgb_fit(path):
+    """the picture, downscaled to MATCH_MAX_W once and cached - every match level resizes FROM this, not from 4K"""
+    img = _rgb(path)
+    if img.width <= MATCH_MAX_W:
+        return img
+    try:
+        key = (str(path), os.stat(path).st_mtime_ns, "fit")
+    except OSError:
+        key = (str(path), 0, "fit")
+    if key not in _FIT_CACHE:
+        if len(_FIT_CACHE) > 24:
+            _FIT_CACHE.clear()
+        k = MATCH_MAX_W / float(img.width)
+        _FIT_CACHE[key] = img.resize((MATCH_MAX_W, max(8, round(img.height * k))), Image.BILINEAR)
+    return _FIT_CACHE[key]
+
+
 def _grey_view(path, box, width):
     """NumPy copy of one region of a picture, `width` px wide, as (H, W, 3) float.
 
     COLOUR, not greyscale: a total-deformation plot and a von-Mises plot of the same model have the same outlines, so a
     greyscale match cannot tell a zoom of one from a zoom of the other (red-team finding D3).  The contour colours can."""
-    img = _rgb(path)
+    img = _rgb_fit(path)
     W, H = img.size
     x0, y0 = int(box[0] * W), int(box[1] * H)
     x1, y1 = max(int(box[2] * W), x0 + 8), max(int(box[3] * H), y0 + 8)
@@ -428,19 +451,37 @@ def match_region(parent_path, detail_path, budget: float = MATCH_BUDGET):
     return res
 
 
-def match_parents(detail_path, candidates, budget: float = MATCH_BUDGET):
+def match_parents(detail_path, candidates, budget: float = MATCH_BUDGET, deadline=None):
     """best parent for one detail picture among [{'id','path','name'}, ...]
-    -> (best_match_or_None, [{'id','score'} ...], ambiguous:bool)"""
-    scores = []
+    -> (best_match_or_None, [{'id','score'} ...], ambiguous:bool, skipped:bool)
+    `deadline` (time.monotonic() based): candidates that would start after it are left for the background pass."""
+    scores, skipped = [], False
     t0 = time.monotonic()
+    todo = []
     for c in candidates:
-        m = match_region(c["path"], detail_path, budget=max(1.0, budget - (time.monotonic() - t0)))
-        if m:
-            scores.append({"id": c["id"], "score": m["score"], "box": m["box"], "side": m["side"], "row": m["row"],
-                           "cx": m["cx"], "cy": m["cy"], "name": c.get("name", "")})
+        if deadline is not None and time.monotonic() > deadline:
+            skipped = True
+            break
+        todo.append(c)
+    if len(todo) > 1:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=min(4, len(todo))) as ex:
+            futs = {ex.submit(match_region, c["path"], detail_path,
+                              budget=max(1.0, budget - (time.monotonic() - t0))): c for c in todo}
+            for f, c in futs.items():
+                m = f.result()
+                if m:
+                    scores.append({"id": c["id"], "score": m["score"], "box": m["box"], "side": m["side"],
+                                   "row": m["row"], "cx": m["cx"], "cy": m["cy"], "name": c.get("name", "")})
+    else:
+        for c in todo:
+            m = match_region(c["path"], detail_path, budget=max(1.0, budget - (time.monotonic() - t0)))
+            if m:
+                scores.append({"id": c["id"], "score": m["score"], "box": m["box"], "side": m["side"], "row": m["row"],
+                               "cx": m["cx"], "cy": m["cy"], "name": c.get("name", "")})
     scores.sort(key=lambda s: -s["score"])
     amb = bool(len(scores) > 1 and scores[0]["score"] - scores[1]["score"] < 0.08 and scores[1]["score"] >= MATCH_MIN)
-    return (scores[0] if scores else None), scores, amb
+    return (scores[0] if scores else None), scores, amb, skipped
 
 
 # ═════════════════════════════════════════════ parsing helpers ═════════════════════════════════════════════
@@ -1303,13 +1344,16 @@ def _region(info, by_id, candidates):
     cands = [c for c in candidates if c and c.get("path") and c["id"] != info["id"]]
     if not cands:
         return None
-    best, scores, amb = match_parents(info["path"], [{"id": c["id"], "path": c["path"], "name": c["name"]} for c in cands])
+    best, scores, amb, skipped = match_parents(info["path"], [{"id": c["id"], "path": c["path"], "name": c["name"]} for c in cands],
+                                               deadline=MATCH_DEADLINE.get("at"))
     info["match_ambiguous"] = amb
     if not best:
+        info["match_pending"] = bool(skipped)
         return None
     m = dict(best)
     m["found"] = True
     info["match"] = m
+    info["match_pending"] = False
     return m
 
 

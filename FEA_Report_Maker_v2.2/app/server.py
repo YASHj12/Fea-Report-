@@ -220,7 +220,8 @@ def public(sid, i):
 
 def payload(sid, infos, draft, cover=None):
     out = {"sid": sid, "images": [public(sid, i) for i in infos], "cases": draft["cases"], "geometry": draft["geometry"],
-           "meshes": draft["meshes"], "warnings": draft["warnings"]}
+           "meshes": draft["meshes"], "warnings": draft["warnings"],
+           "match_pending": [i["id"] for i in infos if i.get("match_pending")]}
     if cover is not None:
         out["cover"] = cover
     return out
@@ -237,10 +238,42 @@ def cleanup_old_sessions(days=7):
             pass
 
 
-def run_analysis(paths, names):
+def run_analysis(paths, names, sid=None):
     t0 = time.time()
-    res = analyzer.analyze(paths, SETTINGS, names=names)
+    analyzer.MATCH_DEADLINE["at"] = time.monotonic() + analyzer.MATCH_SYNC     # the page must not wait for pixel matching
+    try:
+        res = analyzer.analyze(paths, SETTINGS, names=names)
+    finally:
+        analyzer.MATCH_DEADLINE["at"] = None
+    pend = [i["id"] for i in res["images"] if i.get("match_pending")]
+    res["match_pending"] = pend
+    if sid and pend:
+        _start_matcher(sid, pend)
     return res, round(time.time() - t0, 1)
+
+
+def _start_matcher(sid, ids):
+    """finish, in the background, the view-matching that the sync budget left behind; the page polls /api/matches"""
+    def work():
+        try:
+            analyzer.MATCH_DEADLINE["at"] = None
+            infos = load_infos(sid)
+            analyzer.finish(infos, SETTINGS)
+            done = {i["id"]: i for i in infos}
+            cur = load_infos(sid)                                   # re-read: never clobber what the engineer changed meanwhile
+            for i in cur:
+                g = done.get(i["id"])
+                if not g or not (i.get("match_pending") and i["id"] in ids):
+                    continue
+                i["match"] = g.get("match")
+                i["match_ambiguous"] = g.get("match_ambiguous")
+                i["match_pending"] = False
+                if g.get("match") and g.get("parent") is not None:
+                    i["parent"], i["parent_why"] = g.get("parent"), g.get("parent_why")
+            save_infos(sid, cur)
+        except Exception:                                          # noqa: BLE001
+            logging.exception("background matching failed")
+    threading.Thread(target=work, daemon=True).start()
 
 
 # ───────────────────────────────────────────── pages & status ─────────────────────────────────────────────
@@ -306,9 +339,10 @@ def api_analyze():
     if not paths:
         shutil.rmtree(WORK / sid, ignore_errors=True)
         raise UserError("None of the files could be opened as pictures (use PNG or JPG).")
-    res, took = run_analysis(paths, names)
+    res, took = run_analysis(paths, names, sid)
     save_infos(sid, res["images"])
     out = payload(sid, res["images"], res, res["cover"])
+    out["match_pending"] = res.get("match_pending") or []
     out["took"] = took
     out["skipped"] = skipped
     out["manual"] = bool(res.get("manual"))
@@ -326,9 +360,10 @@ def api_analyze_example():
         dest = folder / f"{k:02d}_{p.name}"
         shutil.copyfile(p, dest)
         paths.append(dest)
-    res, took = run_analysis(paths, [p.name for p in src])
+    res, took = run_analysis(paths, [p.name for p in src], sid)
     save_infos(sid, res["images"])
     out = payload(sid, res["images"], res, res["cover"])
+    out["match_pending"] = res.get("match_pending") or []
     out["took"] = took
     out["skipped"] = []
     out["manual"] = bool(res.get("manual"))
@@ -376,9 +411,17 @@ def api_analyze_more():
     for k, i in enumerate(res["images"]):
         i["id"] = base + k
     infos.extend(res["images"])
-    draft = analyzer.finish(infos, SETTINGS)
+    analyzer.MATCH_DEADLINE["at"] = time.monotonic() + analyzer.MATCH_SYNC
+    try:
+        draft = analyzer.finish(infos, SETTINGS)
+    finally:
+        analyzer.MATCH_DEADLINE["at"] = None
+    pend = [i["id"] for i in infos if i.get("match_pending")]
+    if pend:
+        _start_matcher(sid, pend)
     save_infos(sid, infos)
     out = payload(sid, infos, draft)
+    out["match_pending"] = pend
     out["took"] = took
     out["skipped"] = skipped
     out["added"] = added
@@ -394,6 +437,17 @@ def api_regroup():
     draft = analyzer.regroup(infos, p.get("assign", []), SETTINGS)
     save_infos(sid, infos)
     return jsonify(payload(sid, infos, draft))
+
+
+@app.get("/api/matches")
+def api_matches():
+    """the page polls this while background view-matching runs: which views are still being placed, and what was found"""
+    infos = load_infos(request.args.get("sid", ""))
+    return jsonify({"pending": [i["id"] for i in infos if i.get("match_pending")],
+                    "matches": {str(i["id"]): {"match": i.get("match"), "parent": i.get("parent"),
+                                               "parent_why": i.get("parent_why"),
+                                               "match_ambiguous": i.get("match_ambiguous")}
+                                for i in infos if i.get("match") or i.get("parent") is not None}})
 
 
 @app.get("/api/img/<sid>/<int:pid>")

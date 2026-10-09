@@ -351,6 +351,43 @@ function mergeAnalysis(r, keepInputs) {
   S.geometry = r.geometry.map(g => { const o = oldGeo.get(g.id); return Object.assign({}, g, { heading: o ? o.heading : g.heading, caption: o ? o.caption : '', attach: o && o.attach !== undefined ? o.attach : g.attach, parent: o ? o.parent : g.parent }); });
   S.meshes = r.meshes.map(g => { const o = oldMesh.get(g.id); return Object.assign({}, g, { heading: o ? o.heading : g.heading, caption: o ? o.caption : '', attach: o && o.attach !== undefined ? o.attach : g.attach, parent: o ? o.parent : g.parent }); });
   S.cases = r.cases.map(dc => { const o = oldCases.get(dc.n); return o ? mergeCase(o, dc) : newCase(dc); });
+  if ((r.match_pending || []).length) {
+    S.matchPending = new Set([...(S.matchPending || []), ...r.match_pending]);
+    pollMatches();
+  }
+}
+
+let matchPoll = null;
+function pollMatches() {
+  // the server finishes placing zoom / section views in the background so "Next" stays quick; collect the answers here
+  if (matchPoll || !S.sid) return;
+  let tries = 0;
+  const stop = () => { clearInterval(matchPoll); matchPoll = null; };
+  matchPoll = setInterval(async () => {
+    tries++;
+    if (tries > 120) { stop(); return; }
+    let r;
+    try { r = await api(`/api/matches?sid=${encodeURIComponent(S.sid)}`); } catch (e) { return; }
+    let changed = false;
+    for (const [id, m] of Object.entries(r.matches || {})) {
+      const pid = Number(id), img = S.images.find(x => x.id === pid);
+      if (!img) continue;
+      const pimg = (m.parent === null || m.parent === undefined) ? null : S.images.find(x => x.id === m.parent);
+      if (JSON.stringify(img.match || null) !== JSON.stringify(m.match || null)) { img.match = m.match || null; changed = true; }
+      if (pimg && img.parent !== m.parent) { img.parent = m.parent; img.parent_why = m.parent_why; changed = true; }
+      if (img.match_ambiguous !== m.match_ambiguous) { img.match_ambiguous = m.match_ambiguous; changed = true; }
+      for (const c of S.cases) for (const e of (c.extras || [])) if (e.id === pid) {
+        if (JSON.stringify(e.match || null) !== JSON.stringify(m.match || null)) { e.match = m.match || null; changed = true; }
+        if (pimg && e.parent !== m.parent) { e.parent = m.parent; e.parent_name = pimg.name; changed = true; }
+      }
+    }
+    S.matchPending = new Set(r.pending || []);
+    if (changed && !$('#s-review').hidden) { renderReview(); scheduleBuild(); }
+    if (!S.matchPending.size) {
+      stop();
+      if (changed) toast('The zoomed and section views are placed next to their pictures now - press Update preview to see the marks.', 'ok', 9000);
+    }
+  }, 900);
 }
 
 function mergeCase(o, dc) {
@@ -451,10 +488,12 @@ function startReview(r) {
   S.geometry = r.geometry.map(g => ({ id: g.id, heading: g.heading, caption: '', parent: g.parent || null, attach: !!g.attach }));
   S.meshes = r.meshes.map(g => ({ id: g.id, heading: g.heading, caption: '', parent: g.parent || null, attach: !!g.attach }));
   S.cases = r.cases.map(newCase);
+  S.matchPending = new Set(r.match_pending || []);
   S.haveSession = true;
   show('review');
   renderReview();
   scheduleDerive();                       // the preview is NOT built here - the engineer asks for it (council item U3)
+  if (S.matchPending.size) pollMatches(); // but the view placement keeps arriving in the background
 }
 
 // ───────────────────────────── review page ─────────────────────────────
@@ -605,10 +644,11 @@ function pictureEvidence(img) {
       h('option', { value: 'left', selected: ex.pos === 'left' }, 'Side: left'),
       h('option', { value: 'nomark', selected: ex.pos === 'nomark' }, 'Side: right, without the region mark'));
     ssel.addEventListener('change', () => { ex.pos = ssel.value; scheduleSave(); renderPreviewStale(); });
-    const m = ex.match;
+    const m = ex.match, pend = !!(S.matchPending && S.matchPending.has(ex.id));
     bits.push(h('div', { class: 'ev' }, h('b', {}, 'Attached to: '), psel, ' ', asel, ' ', ssel));
     bits.push(h('div', { class: 'ev' }, h('b', {}, 'Why: '), h('span', {},
-      m ? `I found this view inside "${ex.parent_name}" - the marked region is ${m.side === 'left' ? 'on the left' : 'on the right'}, ` +
+      pend ? 'I am still looking for this view inside the other pictures - a second or two.'
+      : m ? `I found this view inside "${ex.parent_name}" - the marked region is ${m.side === 'left' ? 'on the left' : 'on the right'}, ` +
           `${m.row === 'top' ? 'upper' : 'lower'} half (${Math.round(m.score * 100)} % alike).`
         : (ex.view_kind === 'detail' ? `This looks like a zoomed view, but I could not find that region inside "${ex.parent_name}" - it is placed beside it without a mark.`
                                      : ex.parent_why ? `It is attached to ${ex.parent_name} (${ex.parent_why}).` : `It is attached to ${ex.parent_name}.`))));
@@ -948,8 +988,9 @@ function renderExtras(c, box) {
       h('option', { value: 'left', selected: e.pos === 'left' }, 'on the left'),
       h('option', { value: 'nomark', selected: e.pos === 'nomark' }, 'on the right, no region mark'));
     side.addEventListener('change', () => { e.pos = side.value; scheduleSave(); scheduleBuild(); renderPreview(); });
-    const m = e.match;
-    const found = m ? `I found this view inside "${e.parent_name}" - the marked region is ${m.side === 'left' ? 'left' : 'right'}, ` +
+    const m = e.match, pend = !!(S.matchPending && S.matchPending.has(e.id));
+    const found = pend ? 'Zoomed view: I am still looking for its region inside the parent picture - a second or two.'
+      : m ? `I found this view inside "${e.parent_name}" - the marked region is ${m.side === 'left' ? 'left' : 'right'}, ` +
       `${m.row === 'top' ? 'upper' : 'lower'} half (${Math.round(m.score * 100)} % alike).`
       : (e.view_kind === 'detail' ? `Zoomed view: I could not find that region inside "${e.parent_name}", so no mark is drawn.`
                                   : (e.parent_why ? `Attached to ${e.parent_name} - ${e.parent_why}.` : `Attached to ${e.parent_name}.`));
@@ -960,7 +1001,7 @@ function renderExtras(c, box) {
         field('Heading (also the slide title)', e, 'heading', { need: 'bracket', label: `Case ${c.n}: heading of the additional view ${img.name || ''}`, onchange: scheduleDerive }),
         field('Caption', e, 'caption', { optional: true, label: 'Caption' }),
         h('div', { class: 'xwhere' }, h('span', {}, 'Placement: '), where, ' ', h('span', {}, ' '), side),
-        h('div', { class: 'meta' + (m ? ' ok' : '') }, found),
+        h('div', { class: 'meta' + (m && !pend ? ' ok' : '') }, found),
         h('div', { class: 'meta' }, meta.join('  \u00b7  '))),
       h('div', { class: 'acts' }, acts));
   }));

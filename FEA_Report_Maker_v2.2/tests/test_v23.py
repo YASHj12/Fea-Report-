@@ -14,6 +14,7 @@ import json
 import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -194,6 +195,38 @@ def main():
                  content_type="multipart/form-data")
     check("U2 the same picture twice is refused", r.status_code != 200 or r.get_json().get("added") == 0,
           r.get_data(as_text=True)[:200])
+
+    # ── U1b: pixel matching never holds up the page; what the sync budget leaves behind finishes in the background ──
+    analyzer.MATCH_DEADLINE["at"] = time.monotonic() - 1.0            # pretend the budget is already spent
+    fake2 = [dict(id=k, name=n, path=pa, role=rl, letter="A", model="6203_BLADE", deck=analyzer.deck_key("6203_BLADE"),
+                  notes=[], max=None, legend_values=[], bc_draft=[], bc_legend=[], headline_bc=["", ""], unit=None,
+                  legend_px=None, red_px=None, edge_density=None, z_dir=None, gravity=None, dup_of=None,
+                  user_set=False, view_kind=vk, rkind="", result_kind="", parent=None, attach=None, pos="auto",
+                  match=None, match_ambiguous=False)
+             for k, (n, pa, rl, vk) in enumerate([("d.png", str(EX / "image-1.png"), "deformation", ""),
+                                                  ("s.png", str(EX / "image-3.png"), "stress", ""),
+                                                  ("z.png", str(tmp / "stress_zooom_view.png"), "x_stress", "detail")], 1)]
+    analyzer.finish(fake2)
+    dz = fake2[2]
+    check("U1b a spent budget defers matching instead of blocking", bool(dz.get("match_pending")) and not dz.get("match"))
+    analyzer.MATCH_DEADLINE["at"] = None
+
+    infos = server.load_infos(sid)                                    # now the server-side background pass
+    zid = next(i["id"] for i in infos if i["name"] == "stress_zooom_view.png")
+    for i in infos:
+        if i["id"] == zid:
+            i["match"], i["match_pending"] = None, True
+    server.save_infos(sid, infos)
+    server._start_matcher(sid, [zid])
+    got = None
+    for _ in range(60):
+        time.sleep(0.2)
+        mm = cli.get(f"/api/matches?sid={sid}").get_json()
+        if not mm["pending"] and (mm["matches"].get(str(zid)) or {}).get("match"):
+            got = mm
+            break
+    check("U1b the background pass places the view", bool(got) and got["matches"][str(zid)]["match"]["score"] > 0.7,
+          str(got)[:200])
 
     shutil.rmtree(tmp, ignore_errors=True)
     print()

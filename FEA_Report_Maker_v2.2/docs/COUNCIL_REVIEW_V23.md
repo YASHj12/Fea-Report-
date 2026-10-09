@@ -151,6 +151,19 @@ types, matching), **C - Slide Craft** (the results slide with inset views), **D 
 | A on B's page merge | adding pictures mid-session wiped typed headings in the merge | `mergeCase` keeps the existing case's typed fields, server attachment wins only when newer | adopted |
 | all on D's test | the test must not need Tesseract (the office laptop has none) | - | `tests/test_v23.py` runs the manual pipeline + the matcher on `examples/`, no OCR |
 
+### P8  "It takes too long to get from upload to review" - ADOPTED (performance ruling, added after the engineer tried it)
+* Measured on 4K screenshots (11 pictures, two of them zoom/section views): the pixel matching added in P3 ran
+  **serially, at full resolution, up to 5 s per parent candidate** - that is the wait the engineer felt.
+* Ruling (D red team + B): matching may never hold the page. (1) Matching works from a once-cached copy of each
+  picture downscaled to 1600 px - resizing FROM a 4K decode was the real cost, not the correlation.
+  (2) Candidates of one view are matched in parallel threads. (3) A wall-clock budget (`MATCH_SYNC`, 2.5 s) caps what
+  the synchronous pass may spend; whatever it leaves is flagged `match_pending` and finished by a background pass
+  that the page polls (`GET /api/matches`), filling the teal marks in a moment later with a toast.
+  (4) Pair results and decoded pictures stay cached, so a second look costs nothing.
+* After: upload -> review on the 4K job answers in 0.2 s (manual mode); the one cold regroup that places two views
+  costs 2.6 s (decoding the 4K files once) and 0.0 s warm; anything over the budget moves to the background.
+  Tests: `U1b a spent budget defers matching instead of blocking`, `U1b the background pass places the view`.
+
 ## Round 5 - what the council still owes the engineer (known limits, stated plainly)
 
 1. **Without Tesseract installed** the app runs in manual mode: title blocks are not read from pixels, so

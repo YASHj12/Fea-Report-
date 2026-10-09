@@ -33,6 +33,9 @@ NEW IN 2.3   (the seven changes you asked for)
     a teal rectangle and a leader line to the view in a column next to the plots. Up to three views per
     slide; more move to one extra slide and the notes say which. You can overrule everything: which
     parent, which side, or "no region mark".
+  * Getting from the upload page to the review page is quick again: the heavy pixel work (finding a zoomed
+    or section view inside its parent picture) is capped at a couple of seconds; whatever is not finished by
+    then completes in the background and appears on the page a moment later, with a short message.
   * The folder keeps its name FEA_Report_Maker_v2.2 on purpose (your shortcuts point at it); the page and
     the black window say v2.3. The council record of this round is docs/COUNCIL_REVIEW_V23.md and the
     machine-checked evidence is tests/test_v23.py.
