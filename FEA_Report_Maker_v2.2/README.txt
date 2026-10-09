@@ -1,4 +1,4 @@
-FEA REPORT MAKER  -  version 2.2
+FEA REPORT MAKER  -  version 2.3
 ================================
 
 Drop your ANSYS screenshots in. The program sorts them, reads the numbers from the
@@ -8,6 +8,34 @@ PowerPoint or a PDF with one click - like any download in a browser: the file la
 Downloads folder of your computer (Windows: File Explorer > Downloads).
 
 Everything runs on YOUR computer. No picture and no data is sent to the internet.
+
+NEW IN 2.3   (the seven changes you asked for)
+  * Upload waits for you. Pictures you drop or pick are COLLECTED first (a list shows what is waiting);
+    add more pictures or a whole folder at any time, take a batch back with "Back", then press
+    "Next: read the pictures". Nothing is read or sorted until you say so.
+  * A way back, always: the review page footer has "Back to the pictures" (keeps everything you typed)
+    and "Start over" (asks first, then forgets the job). On the upload page "Back" undoes the last batch.
+  * The preview no longer rebuilds by itself. It sits at the BOTTOM of the review page and stays empty
+    ("the preview stays empty until you ask for it") until you press "Update preview" - on the preview
+    card or on the blue button in the footer. While your latest edits are not in it, it is dimmed and
+    says "PREVIOUS build", and the footer button pulses.
+  * The load case of a picture is read from the ANSYS title block (the "A: model name" line at the top
+    left of every result plot), not guessed: pictures cluster by their deck (model) first, then by the
+    case letter, and spelling mistakes in the block are tolerated. Two different decks that both call
+    their first case "A" stay two cases. Expand a row in the Pictures table to see the headline as read
+    and WHY the picture sits in its case.
+  * The result-type list is now the full ANSYS Mechanical list (von-Mises; maximum / middle / minimum
+    principal; maximum shear; stress intensity; normal and shear components; membrane, linearized, shell
+    and beam stresses; every deformation and strain type; strain energy; safety factor; contact; bolt
+    pretension; fatigue; temperature; reaction ...), grouped in the dropdown, each with its unit.
+  * A zoomed or a section view is drawn ON THE SAME SLIDE as the picture it belongs to: the program finds
+    the region inside the parent picture (pure pixel comparison - works without Tesseract), marks it with
+    a teal rectangle and a leader line to the view in a column next to the plots. Up to three views per
+    slide; more move to one extra slide and the notes say which. You can overrule everything: which
+    parent, which side, or "no region mark".
+  * The folder keeps its name FEA_Report_Maker_v2.2 on purpose (your shortcuts point at it); the page and
+    the black window say v2.3. The council record of this round is docs/COUNCIL_REVIEW_V23.md and the
+    machine-checked evidence is tests/test_v23.py.
 
 NEW IN 2.2   (read this if you still see the OLD screen)
   * The page shows its VERSION at the top right (a small box "v2.2"). If it shows another number, or no
@@ -86,7 +114,7 @@ A black window opens - leave it open while you work - and your browser opens at
         http://127.0.0.1:5055
 (If an older copy is still running, this one uses the next free number - 5056 and so on - and the black
 window tells you. The address in the browser is always the right one.)
-The small box "v2.2" at the top right is the version you are looking at.
+The small box "v2.3" at the top right is the version you are looking at.
 The top right of the page shows "Picture reader: ready" (or "manual mode" when Tesseract is
 not installed - see 1B) and where the PDF comes from.
 
@@ -99,14 +127,16 @@ If you close the browser tab by mistake, open the address again: the page offers
 3.  HOW TO USE
 -----------------------------------------------------------------------------
 
- 1. Drag ALL pictures of one job into the page (any order, any file names): geometry,
+ 1. Drag pictures of one job into the page FOLDER BY FOLDER (any order, any file names): geometry,
     mesh, and for every load case the setup / total deformation / von-Mises stress picture,
-    plus section views, detail views or other result types if you have them.
+    plus section views, detail views or other result types if you have them. They wait in a list;
+    when everything is in, press "Next: read the pictures".
     Missing some of them? Drop what you have - see "NOTHING BLOCKS YOU" below.
     No pictures at hand? Press "Try it with the 9 example pictures".
 
- 2. Look at the preview (top of the page) and check the draft below it. Yellow boxes are things
-    only you know. Everything else is filled in, and every sentence can be edited.
+ 2. Work through the cards top to bottom; the PREVIEW is the last card, at the bottom of the page.
+    Yellow boxes are things only you know. Everything else is filled in, and every sentence can be
+    edited. The preview stays empty until you press "Update preview" - it never rebuilds by itself.
     - The preview shows the real report: arrows or the small slides below it move through
       the pages, "Full screen" shows a slide large.
     - "Checks" lists what the program noticed.
@@ -161,7 +191,8 @@ WHAT THE PROGRAM DOES BY ITSELF
   - suggests the yield stress from the stress legend; checks units, density, Young's modulus,
     Poisson's ratio, gravity, FOS; checks mesh statistics against the ANSYS limits
   - keeps your work safe: everything you type is saved automatically
-  - keeps the preview up to date and ready to download at every moment
+  - rebuilds the preview ONLY when you ask (it never jumps or steals the page while you type);
+    downloading always flushes your latest edits into the file first
 
 WHAT NEEDS YOU
   - the yield stress (always typed or accepted by you, never remembered between jobs)
@@ -288,7 +319,7 @@ OPTIONAL ENGINEERING EVIDENCE (printed only if you fill it in)
                                     If the page is shown INSIDE another window (for example the preview pane of a
                                     website) that window can forbid every download. Open the program in a normal
                                     browser tab of your own computer (start_windows.bat), or take the copy from outputs.
-  I still see the old screen        Look at the top right of the page: it must say  v2.2.  If not, an OLD copy is still
+  I still see the old screen        Look at the top right of the page: it must say  v2.3.  If not, an OLD copy is still
                                     open. Close all black windows of the program and the browser tabs, start the new
                                     folder again. (Extract the ZIP into a NEW folder; do not mix it with an old one.)
   Where is my file?                 Your browser's Downloads folder (Windows: File Explorer > Downloads, or

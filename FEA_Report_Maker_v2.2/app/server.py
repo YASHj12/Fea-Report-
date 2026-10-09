@@ -45,7 +45,7 @@ import mw_report as mw     # noqa: E402
 
 import pptx_preview as pv  # noqa: E402     (the program's own slide renderer: no LibreOffice needed)
 
-VERSION = "2.2"
+VERSION = "2.3"
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
 DEFAULTS = {
     "port": 5055,
@@ -267,7 +267,10 @@ def api_status():
                   "material_header": SETTINGS["material_header"], "assumption_library": SETTINGS["assumption_library"],
                   "show_utilisation": SETTINGS["show_utilisation"], "min_legend_pt": SETTINGS["min_legend_pt"],
                   "singularity_factor": SETTINGS["singularity_factor"],
-                  "missing_pictures": "frame" if SETTINGS.get("missing_pictures") == "frame" else "skip"})
+                  "missing_pictures": "frame" if SETTINGS.get("missing_pictures") == "frame" else "skip"},
+        result_kinds=[{"key": k, "label": v["label"], "short": v["short"], "unit": v["unit"], "group": v["group"]}
+                      for k, v in analyzer.RESULT_KINDS.items()],
+        view_kinds=["section", "detail"])
 
 
 # ───────────────────────────────────────────── step 1: read the pictures ─────────────────────────────────────────────
@@ -328,6 +331,57 @@ def api_analyze_example():
     out = payload(sid, res["images"], res, res["cover"])
     out["took"] = took
     out["skipped"] = []
+    out["manual"] = bool(res.get("manual"))
+    return jsonify(out)
+
+
+@app.post("/api/analyze_more")
+def api_analyze_more():
+    """More pictures for the SAME report - the engineer keeps them in different folders and adds them one folder at a
+    time (council item U2).  Everything already typed stays; the new pictures are read and folded into the draft."""
+    files = [f for f in request.files.getlist("files") if f and f.filename]
+    sid = request.form.get("sid") or (request.args.get("sid") or "")
+    if not files:
+        raise UserError("No pictures received.")
+    infos = load_infos(sid)
+    folder = sess_dir(sid) / "images"
+    seen = {i.get("hash") for i in infos}
+    paths, names, skipped, added = [], [], [], 0
+    base = max([i["id"] for i in infos] or [-1]) + 1
+    import hashlib as _h
+    for f in files:
+        ext = Path(f.filename).suffix.lower()
+        if ext not in IMAGE_EXTS:
+            skipped.append(f.filename)
+            continue
+        dest = folder / f"{len(infos) + added:02d}_{secure_filename(f.filename) or 'picture' + ext}"
+        f.save(dest)
+        try:
+            with Image.open(dest) as im:
+                im.verify()
+            if _h.md5(dest.read_bytes()).hexdigest() in seen:
+                dest.unlink(missing_ok=True)
+                skipped.append(f"{f.filename} (already in this report)")
+                continue
+        except Exception:                                                 # noqa: BLE001
+            dest.unlink(missing_ok=True)
+            skipped.append(f.filename)
+            continue
+        paths.append(dest)
+        names.append(Path(f.filename).name)
+        added += 1
+    if not paths:
+        raise UserError("None of these files could be added (not pictures, or already in this report).")
+    res, took = run_analysis(paths, names)
+    for k, i in enumerate(res["images"]):
+        i["id"] = base + k
+    infos.extend(res["images"])
+    draft = analyzer.finish(infos, SETTINGS)
+    save_infos(sid, infos)
+    out = payload(sid, infos, draft)
+    out["took"] = took
+    out["skipped"] = skipped
+    out["added"] = added
     out["manual"] = bool(res.get("manual"))
     return jsonify(out)
 
@@ -620,10 +674,18 @@ def plan_layouts(p: dict, ctx: dict, infos: list) -> dict:
         px = (c.get("legend_px") or job_px)
         comp = compose_case(c, ctx)
         caps = [comp["texts"]["deformation_caption"] or None, comp["texts"]["stress_caption"] or None]
+        att = [e for e in (c.get("extras") or []) if e.get("attach")][: mw.MAX_INSETS]
         per = {}
         for m in res_opts:
             sc = mw.panel_scales("results", m, [s[:2] for s in sz], caps)
-            per[m] = {"pt": round(min(s * z[2] * px / 0.72 for s, z in zip(sc, sz)), 1), "slides": res_opts[m]["slides"]}
+            pt = round(min(s * z[2] * px / 0.72 for s, z in zip(sc, sz)), 1)
+            if att and m in ("side", "stack"):                # views on the same slide take a column away: show the honest legend size
+                panels = [dict(image=pd, caption=caps[0], csize=16), dict(image=ps, caption=caps[1], csize=14)]
+                sides = [{"side": (e.get("pos") if e.get("pos") in ("left", "right")
+                                   else (e.get("match") or {}).get("side") or "right")} for e in att]
+                sd = mw.panel_scales_detail(panels, sides, m)
+                pt = min(pt, round(min(s * z[2] * px / 0.72 for s, z in zip(sd, sz)), 1))
+            per[m] = {"pt": pt, "slides": res_opts[m]["slides"]}
             res_opts[m]["pt"] = min(res_opts[m]["pt"], per[m]["pt"])
         plan["cases"][str(c["n"])] = {"results": per}
     # --- views (geometry + mesh)
@@ -683,7 +745,10 @@ def plan_layouts(p: dict, ctx: dict, infos: list) -> dict:
     # A plain drawing (geometry, mesh) has no legend to read, so it may be a little smaller than a plot with a legend.
     soft = round(0.7 * min_pt, 2)
     has_legend_extras = any(e.get("kind") in ("deformation", "stress", "other") for c in cases for e in (c.get("extras") or []))
-    plan["results"] = finish("results", res_opts, ("side", "stack", "separate"), min_pt)
+    res_order = ("side", "stack", "separate")
+    if any(e.get("attach") for c in cases for e in (c.get("extras") or [])):
+        res_order = ("side", "stack")          # attached views live ON the combined results slide: auto may not split it
+    plan["results"] = finish("results", res_opts, res_order, min_pt)
     plan["geometry"] = finish("geometry", views_opts, ("side", "stack", "separate"), soft)
     plan["bc"] = finish("bc", bc_opts, ("side", "stack"), min_pt)
     plan["extras"] = finish("extras", ext_opts, ("side", "stack", "separate"), min_pt if has_legend_extras else soft)
@@ -932,16 +997,42 @@ def build_cfg(p: dict, infos: list, out_path: Path) -> dict:
                 r[k] = PLACEHOLDER_VALUE
 
     def views(lst):
-        out = []
+        """flat list first; then every view that was attached to another one is nested inside its parent, so
+        build_view_slides draws it on the SAME slide, next to it (council item A4)."""
+        flat = []
         for k, v in enumerate(lst or [], 1):
             path = pic(v.get("id"))
             if not path:
                 continue
-            d = {"heading": (v.get("heading") or "").strip() or f"View {k}", "image": path}
+            d = {"heading": (v.get("heading") or "").strip() or f"View {k}", "image": path, "id": v.get("id")}
             if (v.get("caption") or "").strip():
                 d["caption"] = v["caption"].strip()
-            out.append(d)
-        return out
+            flat.append(d)
+        parent_of = {v.get("id"): v.get("parent") for v in (lst or [])}
+        attach_of = {v.get("id"): bool(v.get("attach")) for v in (lst or [])}
+
+        def root(pid, seen=()):
+            while attach_of.get(pid) and parent_of.get(pid) is not None and pid not in seen:
+                seen = seen + (pid,)
+                pid = parent_of[pid]
+            return pid
+
+        top = [d for d in flat if not (attach_of.get(d["id"]) and root(d["id"]) != d["id"])]
+        top_ids = [d["id"] for d in top]
+        for d in flat:
+            if d["id"] in top_ids:
+                continue
+            t = next((x for x in top if x["id"] == root(d["id"])), None)
+            if t is None:
+                top.append(d)
+                top_ids.append(d["id"])
+            elif len(t.setdefault("insets", [])) < mw.MAX_INSETS:
+                t["insets"].append({k2: v2 for k2, v2 in d.items() if k2 != "id"})
+            else:
+                top.append(d)
+        for d in top:
+            d.pop("id", None)
+        return top
 
     def view_block(vs):
         if not vs:
@@ -979,7 +1070,9 @@ def build_cfg(p: dict, infos: list, out_path: Path) -> dict:
             case["max_deformation_mm"] = d
         if sx is not None:
             case["max_stress_mpa"] = sx
-        extras = []
+        extras, insets = [], []
+        slot_of = {c.get("def_id"): 0, c.get("stress_id"): 1}
+        per_slot = {0: 0, 1: 0}
         for e in c.get("extras") or []:
             path = pic(e.get("id"))
             if e.get("kind") not in ("bc", "deformation", "stress", "other") or not path:
@@ -987,9 +1080,24 @@ def build_cfg(p: dict, infos: list, out_path: Path) -> dict:
             ex = {"kind": e["kind"], "heading": (e.get("heading") or "").strip() or "Additional view", "image": path}
             if (e.get("caption") or "").strip():
                 ex["caption"] = e["caption"].strip()
-            extras.append(ex)
+            slot = slot_of.get(e.get("parent"))
+            m = e.get("match") or {}
+            pos = e.get("pos") or "auto"
+            side = pos if pos in ("left", "right") else (m.get("side") or "right")
+            if e.get("attach") and slot is not None and per_slot[slot] < mw.MAX_INSETS:
+                per_slot[slot] += 1
+                ins = {"image": path, "heading": ex["heading"], "parent_slot": slot, "side": side}
+                if ex.get("caption"):
+                    ins["caption"] = ex["caption"]
+                if m.get("box") and pos != "nomark":
+                    ins["region"] = m["box"]
+                insets.append(ins)
+            else:
+                extras.append(ex)
         if extras:
             case["extras"] = extras
+        if insets:
+            case["insets"] = insets
         t = c.get("texts") or {}                                          # only what the engineer edited by hand wins
         if "deformation_caption" in t:
             case["deformation_caption"] = str(t["deformation_caption"]).strip()

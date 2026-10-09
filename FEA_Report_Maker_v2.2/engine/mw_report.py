@@ -37,7 +37,7 @@ from pathlib import Path
 from PIL import Image, ImageChops, ImageFont
 from pptx import Presentation
 from pptx.dml.color import RGBColor
-from pptx.enum.shapes import PP_PLACEHOLDER
+from pptx.enum.shapes import MSO_SHAPE, PP_PLACEHOLDER
 from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
 from pptx.opc.constants import RELATIONSHIP_TYPE as RT
 from pptx.oxml import parse_xml
@@ -966,7 +966,148 @@ def image_size(spec, autocrop=True):
     return im.size[0], im.size[1], k
 
 
-def build_results(prs, title, case, autocrop, layout="side", pre=""):
+# ───────────────────────────── detail views on their parent's slide ─────────────────────────────
+# Council item A4: a zoomed or sectioned view belongs NEXT TO the picture it was taken from, on the SAME slide -
+# flipping through extra slides to compare a detail with its parent is exactly the "extra effort" the engineer refused.
+# The region the detail was matched in (analyzer.match_region) is drawn as a thin outline on the parent picture and a
+# leader line runs from that outline to the detail, so the reader sees at once where the detail came from.
+DET_W = 238.0                       # width of the detail column (pt)
+DET_GAP = 18.0
+DET_TOP, DET_BOT = STK_TOP, 430.0   # the detail column stays above the corner triangle (tri_left > 900 up there)
+DET_HEAD = 27.0                     # heading height above a detail picture (two lines at 10.5 pt)
+DET_CAP = 12.0                      # caption height under a detail picture
+MAX_INSETS = 3                      # more than this and the slide stops being readable -> the rest get their own slide
+
+
+def _panel_slot(p, size, box, with_heading=False):
+    """like _single_slot but inside ANY box - a slide that gives part of its width to a detail column needs this"""
+    x0, y0, x1, y1 = box
+    hh = HEAD_OFF if with_heading else 0.0
+    cap_h = _cap_height(p, x1 - x0)
+    avail = (y1 - y0) - hh - ((CAP_GAP + cap_h) if cap_h else 0.0)
+    x, y, w, h, _sc = fit(size, (x0, y0 + hh, x1, min(y1, y0 + hh + avail)), "c", "c")
+    cx = x + w / 2
+    y_cap = y + h + CAP_GAP
+    cw = max(160.0, min(x1 - x0, 2 * (tri_left(y_cap + cap_h) - 6 - cx))) if cap_h else 0.0
+    return dict(rect=(x, y, w, h), hx=(x0, x1), hy=max(y0, y - HEAD_OFF), cap=(cx - cw / 2, y_cap, cw, cap_h + 2.0) if cap_h else None)
+
+
+def _in_box_slots(panels, loaded, box, mode):
+    x0, y0, x1, y1 = box
+    if len(panels) == 1:
+        return [_panel_slot(panels[0], loaded[0][1], box)]
+    if mode == "stack":
+        gap = 12.0
+        block = (y1 - y0 - gap) / 2
+        return [_panel_slot(p, sz[1], (x0, y0 + k * (block + gap), x1, y0 + k * (block + gap) + block))
+                for k, (p, sz) in enumerate(zip(panels, loaded))]
+    w = (x1 - x0 - 14.0) / 2
+    return [_panel_slot(p, sz[1], (x0 + k * (w + 14.0), y0, x0 + k * (w + 14.0) + w, y1))
+            for k, (p, sz) in enumerate(zip(panels, loaded))]
+
+
+def _region_rect(rect, region):
+    """the matched region of the parent picture, in slide points"""
+    x, y, w, h = rect[:4]
+    fx0, fy0, fx1, fy1 = region
+    return (x + fx0 * w, y + fy0 * h, x + fx1 * w, y + fy1 * h)
+
+
+def _detail_column(box, n):
+    """the column split into n detail slots -> [(x0, y0, x1, y1)]"""
+    x0, y0, x1, y1 = box
+    avail = y1 - y0
+    per = (avail - 10.0 * (n - 1)) / n
+    out, y = [], y0
+    for _ in range(n):
+        out.append((x0, y, x1, y + per))
+        y += per + 10.0
+    return out
+
+
+def build_detail_slide(prs, title, panels, insets, autocrop, mode="side", subtitle=None, note=None):
+    """One slide that carries the main picture(s) AND the detail / section views attached to them.
+
+    panels  [{heading, image, caption?, csize?, ccolor?, alt?, name?}]        1 or 2 main pictures
+    insets  [{heading, image, caption?, parent: 0|1, region: [4] or None, side: 'left'|'right'}]
+    The detail column goes on the side the matched region lies (default right); each detail is drawn inside it with its
+    heading above, and the matched region is outlined on the parent picture with a leader line to the detail."""
+    insets = [i for i in insets if i.get("image")][:MAX_INSETS]
+    if not insets:
+        raise ValueError("build_detail_slide needs at least one inset")
+    sides = [i.get("side") or "right" for i in insets]
+    side = max(set(sides), key=sides.count)
+    dw = min(DET_W, (STK_X1 - STK_X0 - 300.0) / 1.0) if len(panels) == 2 else DET_W
+    if side == "right":
+        main_box, det_box = (STK_X0, STK_TOP, STK_X1 - dw - DET_GAP, STK_BOT), (STK_X1 - dw, DET_TOP, STK_X1, DET_BOT)
+    else:
+        main_box, det_box = (STK_X0 + dw + DET_GAP, STK_TOP, STK_X1, STK_BOT), (STK_X0, DET_TOP, STK_X0 + dw, DET_BOT)
+    s = content_slide(prs, title, subtitle)
+    loaded = [load_image(p["image"], autocrop) for p in panels]
+    slots = _in_box_slots(panels, loaded, main_box, mode)
+    parent_rects = []
+    for p, (buf, _sz), sl in zip(panels, loaded, slots):
+        _draw_panel(s, dict(p, hsize=p.get("hsize", 17), csize=p.get("csize", 13)), buf, sl)
+        parent_rects.append(sl["rect"])
+    boxes = _detail_column(det_box, len(insets))
+    marks = []
+    for ins, (bx0, by0, bx1, by1) in zip(insets, boxes):
+        hp = by0
+        py = by0 + DET_HEAD
+        if ins.get("heading"):
+            add_text(s, bx0, hp, bx1 - bx0, DET_HEAD, [P([R(ins["heading"], 10.5, True, TEAL_DK)], align="c")],
+                     wrap=True, name=f"{ins['heading']} heading")
+        buf, size = load_image(ins["image"], autocrop)
+        cap_h = _cap_height(dict(ins, csize=10), bx1 - bx0)
+        x, y, w, h, _sc = fit(size, (bx0, py, bx1, by1 - ((CAP_GAP + cap_h) if cap_h else 0.0)), "c", "t")
+        place_picture(s, buf, (x, y, w, h), name=ins.get("name") or ins.get("heading") or "detail view",
+                      alt=ins.get("heading") or "detail view")
+        if ins.get("caption") and cap_h:
+            lines = balanced_lines(glue_units(ins["caption"]), bx1 - bx0, 10, True)
+            add_text(s, bx0, y + h + 3.0, bx1 - bx0, cap_h + 4.0, [P([R(ln, 10, False, GREY)], align="c") for ln in lines],
+                     name=f"{ins.get('heading') or 'detail'} caption")
+        marks.append((ins, (x, y, w, h)))
+    for ins, drect in marks:                                   # mark the matched region on the parent + a leader line
+        pi = ins.get("parent_slot", 0) if ins.get("parent_slot") in range(len(parent_rects)) else 0
+        reg = ins.get("region")
+        if not reg:
+            continue
+        rx0, ry0, rx1, ry1 = _region_rect(parent_rects[pi], reg)
+        box = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, E(rx0), E(ry0), E(max(6.0, rx1 - rx0)), E(max(6.0, ry1 - ry0)))
+        box.fill.background()
+        box.line.color.rgb = RGBColor.from_string(TEAL)
+        box.line.width = Pt(1.25)
+        box.shadow.inherit = False
+        box.name = "Detail region mark"
+        ln = s.shapes.add_connector(1, E(rx1 if side == "right" else rx0), E((ry0 + ry1) / 2),
+                                    E(drect[0] if side == "right" else drect[0] + drect[2]), E(drect[1] + drect[3] / 2))
+        ln.line.width = Pt(1.0)
+        ln.line.color.rgb = RGBColor.from_string(TEAL)
+        ln.name = "Detail leader"
+    if note:
+        _picture_note(s, note)
+    return s
+
+
+def panel_scales_detail(panels, insets, mode):
+    """predicted legend pt-scale of the main pictures when a detail column is taken away - so the web page can show how
+    readable the legends stay on the combined slide"""
+    sides = [i.get("side") or "right" for i in insets] or ["right"]
+    side = max(set(sides), key=sides.count)
+    dw = min(DET_W, (STK_X1 - STK_X0 - 300.0) / 1.0) if len(panels) == 2 else DET_W
+    if side == "right":
+        main_box = (STK_X0, STK_TOP, STK_X1 - dw - DET_GAP, STK_BOT)
+    else:
+        main_box = (STK_X0 + dw + DET_GAP, STK_TOP, STK_X1, STK_BOT)
+    sizes = [load_image(p["image"], True)[1] for p in panels]
+    loaded = [(None, tuple(sz)) for sz in sizes]
+    caps = [p.get("caption") for p in panels]
+    pn = [dict(p, csize=p.get("csize", 13)) for p in panels]
+    slots = _in_box_slots(pn, loaded, main_box, mode)
+    return [sl["rect"][2] / sz[0] for sl, sz in zip(slots, sizes)]
+
+
+def _build_results_plain(prs, title, case, autocrop, layout="side", pre=""):
     panels = [
         dict(box=RES_L_BOX, heading="Total deformation", image=case.get("deformation_image"), caption=case.get("deformation_caption"),
              csize=16, ccolor=NAVY, cbox=(60.0, 480.0), alt="Total deformation contour plot"),
@@ -994,7 +1135,7 @@ def build_results(prs, title, case, autocrop, layout="side", pre=""):
     return [s]
 
 
-def build_view_slides(prs, title, views, autocrop, what, layout="side", single_title=None, note=None):
+def _build_view_slides_plain(prs, title, views, autocrop, what, layout="side", single_title=None, note=None):
     """N pictures with headings (geometry views, mesh views, section / detail views).
     side: two per slide;  stack: two per slide, one above the other;  separate: one per slide.
     views: [{heading, image, caption?}]"""
@@ -1026,6 +1167,83 @@ def build_view_slides(prs, title, views, autocrop, what, layout="side", single_t
         build_single(s, dict(heading=v["heading"], image=v["image"], alt=f"{what} - {v['heading']}", caption=v.get("caption"),
                              csize=14, ccolor=BODY, name=v["heading"]), autocrop, with_heading=False)
         slides.append(s)
+    return slides
+
+
+def build_results(prs, title, case, autocrop, layout="side", pre=""):
+    """The results slide of one load case.  When detail / section views are ATTACHED to a result plot they are drawn on
+    THIS slide, in a column next to their parent, with the matched region marked (see build_detail_slide) - the engineer
+    asked for no extra slide-flipping.  Without attachments this is exactly the template's slide."""
+    insets = [i for i in (case.get("insets") or []) if i.get("image")]
+    if not insets:
+        return _build_results_plain(prs, title, case, autocrop, layout, pre)
+    panels = [
+        dict(box=RES_L_BOX, heading="Total deformation", image=case.get("deformation_image"),
+             caption=case.get("deformation_caption"), csize=16, ccolor=NAVY, cbox=(60.0, 480.0),
+             alt="Total deformation contour plot"),
+        dict(box=RES_R_BOX, heading="Von-mises stress", image=case.get("stress_image"),
+             caption=case.get("stress_caption"), csize=14, ccolor=BODY, cbox=(496.0, 852.0),
+             alt="Von-mises stress contour plot"),
+    ]
+    have = [(k, p) for k, p in enumerate(panels) if p["image"]]
+    if not have:
+        return _build_results_plain(prs, title, case, autocrop, layout, pre)
+    remap = {old: new for new, (old, _p) in enumerate(have)}
+    use, over = [], []
+    for ins in insets:
+        tgt = remap.get(ins.get("parent_slot"), 0)
+        (use if len([x for x in use if x["parent_slot"] == tgt]) < MAX_INSETS else over).append(dict(ins, parent_slot=tgt))
+    out = []
+    if layout == "separate":
+        for k, p in have:
+            mine = [i for i in use if i["parent_slot"] == k]
+            ttl = f"{pre}Total Deformation" if k == 0 else f"{pre}Von-Mises Stress"
+            if mine:
+                out.append(build_detail_slide(prs, ttl, [dict(p, csize=14)], mine, autocrop, "side"))
+            else:
+                sl = content_slide(prs, ttl)
+                build_single(sl, p, autocrop, with_heading=False)
+                out.append(sl)
+    else:
+        mine = use[:MAX_INSETS]
+        over = over + use[MAX_INSETS:]
+        out.append(build_detail_slide(prs, title, [p for _k, p in have], mine, autocrop,
+                                      "side" if layout == "side" else "stack"))
+    if over:
+        notes = []
+        out += _build_view_slides_plain(prs, f"{title} \u2013 additional views", over, autocrop,
+                                        "result - additional view", "separate", single_title=lambda v: f"{pre}{v['heading']}")
+        names = ", ".join((v.get("heading") or "a view") for v in over)
+        notes.append(f"{len(over)} view(s) had no room left beside their picture and moved to their own slide: {names}.")
+        case.setdefault("_notes_extra", []).extend(notes)
+    return out
+
+
+def build_view_slides(prs, title, views, autocrop, what, layout="side", single_title=None, note=None):
+    """N pictures with headings.  A view that carries attached detail views gets a slide of its own WITH those details
+    next to it; the others keep the usual two-per-slide arrangement."""
+    if not any(v.get("insets") for v in views):
+        return _build_view_slides_plain(prs, title, views, autocrop, what, layout, single_title, note)
+    slides, plain = [], []
+    def flush():
+        nonlocal plain
+        if plain:
+            slides.extend(_build_view_slides_plain(prs, title, plain, autocrop, what, layout, single_title, note))
+            plain = []
+    for v in views:
+        ins = [x for x in (v.get("insets") or []) if x.get("image")]
+        if not ins:
+            plain.append(v)
+            continue
+        flush()
+        panel = dict(heading=v["heading"], image=v["image"], alt=f"{what} - {v['heading']}", caption=v.get("caption"),
+                     csize=14, ccolor=BODY)
+        ttl = f"{title} \u2013 {v['heading']}" if len(views) > 1 else title
+        slides.append(build_detail_slide(prs, ttl, [panel], ins[:MAX_INSETS], autocrop, "side", note=note))
+        if ins[MAX_INSETS:]:
+            slides += _build_view_slides_plain(prs, f"{title} \u2013 additional views", ins[MAX_INSETS:], autocrop, what,
+                                               "separate", single_title=lambda x: x["heading"])
+    flush()
     return slides
 
 
@@ -1245,6 +1463,8 @@ def build_report(cfg: dict, out: str | None = None) -> str:
         if not build_observation(prs, case.get("observation_title", f"{pre}Observation & Summary"),
                                  case.get("observations") or [], case.get("conclusion")):
             notes.append(f"Case {n}: observation slide left out (no numbers to write about).")
+        for x in case.pop("_notes_extra", []) or []:          # set while this case's slides were built (e.g. views that did not fit beside their parent)
+            notes.append(x)
     if cases:
         build_summary(prs, derive_summary(cfg))
     else:

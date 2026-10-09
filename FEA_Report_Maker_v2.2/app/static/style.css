@@ -329,3 +329,47 @@ svg.ico { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-wi
   main { padding-bottom: 96px; }
 }
 @media (max-width: 700px) { .pv-actions [data-dl] { display: none; } }
+
+/* ── v2.3: staged upload (add folder by folder, then Next / Back) ───────────────────── */
+.addrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 10px 2px 4px; }
+.addrow .hint { color: var(--grey); font-size: 13px; }
+.drop.small { padding: 22px 16px; }
+.drop.small svg { display: none; }
+.drop.small b { font-size: 16px; }
+.drop.small span { font-size: 12.5px; }
+.stage { margin: 14px 0 4px; border: 1px solid var(--line); border-radius: 12px; background: #fbfdff; }
+.stage-head { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.stage-head b { color: var(--navy); }
+.stage-head .grow { flex: 1; }
+.stage-list { max-height: 220px; overflow: auto; padding: 6px 8px; }
+.stg { display: flex; align-items: center; gap: 10px; padding: 5px 8px; border-radius: 8px; font-size: 13.5px; }
+.stg:nth-child(odd) { background: #f2f7fc; }
+.stg-n { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink, #23282d); }
+.stg-s { color: var(--grey); font-size: 12px; white-space: nowrap; }
+.stage-next { display: flex; align-items: center; gap: 14px; padding: 12px 14px; border-top: 1px solid var(--line); }
+button.big { padding: 12px 22px; font-size: 15.5px; }
+
+/* ── v2.3: evidence row in the pictures table ──────────────────────────────────────── */
+.thwrap { display: flex; align-items: flex-start; gap: 6px; }
+tr.picmore > td { background: #f7fafd; border-top: 0; padding: 10px 14px 12px; }
+.evbox { display: grid; gap: 5px; }
+.ev { font-size: 13px; color: var(--grey); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ev b { color: var(--navy); font-weight: 600; }
+.ev.warn { color: #7a5200; }
+.ev select.sel { max-width: 340px; }
+button.icon.on { background: var(--navy); color: #fff; }
+
+/* ── v2.3: additional-view placement controls ─────────────────────────────────────── */
+.xwhere { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0 2px; font-size: 13px; color: var(--grey); }
+.xwhere select { max-width: 300px; }
+.meta.ok { color: var(--ok); }
+.kindtag.view { background: #e8f2fb; color: #1d5c8f; }
+
+/* ── v2.3: preview that waits for you ─────────────────────────────────────────────── */
+.pv-frame.stale img { opacity: .3; filter: saturate(.55); }
+.pv-frame .pv-wait { background: rgba(255, 255, 255, .82); gap: 8px; padding: 18px; text-align: center; }
+.pv-frame .pv-wait b { color: var(--navy); font-size: 15px; }
+.pv-frame .pv-wait span { color: var(--grey); font-size: 13px; max-width: 520px; }
+.pv-frame .pv-wait .ico { width: 30px; height: 30px; color: var(--blue); }
+#btn-preview.attn { animation: attnp 1.6s ease-in-out infinite; }
+@keyframes attnp { 0%, 100% { box-shadow: 0 0 0 0 rgba(42, 111, 166, .0); } 50% { box-shadow: 0 0 0 6px rgba(42, 111, 166, .18); } }

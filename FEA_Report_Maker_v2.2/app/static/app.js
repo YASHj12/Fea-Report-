@@ -45,6 +45,46 @@ const ROLES = [['geometry', 'Geometry (the model)'], ['mesh', 'Mesh'], ['bc', 'S
                ['deformation', 'Total deformation'], ['stress', 'Von-Mises stress'],
                ['x_deformation', 'Extra view: deformation'], ['x_stress', 'Extra view: stress'], ['x_other', 'Extra view: other result'],
                ['x_bc', 'Extra view: setup'], ['unused', 'Not used'], ['unknown', 'Choose ...']];
+const choiceOf = i => `${i.role || 'unknown'}|${i.view_kind || ''}|${i.rkind || ''}`;
+
+// "What is it?" as grouped options: the main pictures, then every named ANSYS result type as an additional view
+// (section / zoom / own plot), then the leftovers.  Built from the catalogue the program sends (one list, one place).
+function roleOptions(img) {
+  const kinds = (S.status && S.status.result_kinds) || [];
+  const byGroup = {};
+  kinds.forEach(k => { (byGroup[k.group] = byGroup[k.group] || []).push(k); });
+  const G = [['stress', 'Other stress plots (additional view)'], ['deformation', 'Other deformation plots (additional view)'],
+             ['strain', 'Strain results (linear / nonlinear)'], ['energy', 'Energy'], ['tool', 'Stress tool & contact / bolt results'],
+             ['thermal', 'Thermal'], ['other', 'Other results']];
+  const viewOf = (role, vk, rk, label) => h('option', { value: `${role}|${vk}|${rk}`, selected: choiceOf(img) === `${role}|${vk}|${rk}` }, label);
+  const groups = [h('optgroup', { label: 'The main pictures' },
+    ROLES.filter(r => ['geometry', 'mesh', 'bc', 'deformation', 'stress'].includes(r[0]))
+      .map(([v, t]) => h('option', { value: `${v}||`, selected: choiceOf(img) === `${v}||` || (img.role === v && !img.view_kind && !img.rkind) }, t)))];
+  for (const [g, label] of G) {
+    const ks = byGroup[g] || [];
+    if (!ks.length) continue;
+    groups.push(h('optgroup', { label }, ks.flatMap(k => {
+      const main = k.key === 'von_mises' ? 'stress' : k.key === 'total_deformation' ? 'deformation' : 'x_other';
+      const opts = [viewOf(main === 'x_other' ? 'x_other' : main, '', k.key, k.label)];
+      if (main !== 'x_other') {                       // a section or a zoom OF this plot
+        opts.push(viewOf('x_' + main, 'section', k.key, `Section view of ${k.short}`),
+                  viewOf('x_' + main, 'detail', k.key, `Zoomed / detail view of ${k.short}`));
+      }
+      return opts;
+    })));
+  }
+  groups.push(h('optgroup', { label: 'Views of the main pictures' },
+    viewOf('x_stress', 'section', '', 'Section view of the von-Mises stress'),
+    viewOf('x_stress', 'detail', '', 'Zoomed / detail view of the von-Mises stress'),
+    viewOf('x_deformation', 'section', '', 'Section view of the deformation'),
+    viewOf('x_deformation', 'detail', '', 'Zoomed / detail view of the deformation'),
+    viewOf('x_bc', 'detail', '', 'Zoomed / detail view of the setup'),
+    viewOf('x_other', '', 'other', 'Another result (I will keep the name you type in the heading)')));
+  groups.push(h('optgroup', { label: 'Not used' },
+    h('option', { value: 'unused||', selected: img.role === 'unused' }, 'Not used'),
+    img.role === 'unknown' ? h('option', { value: 'unknown||', selected: true }, 'Choose ...') : null));
+  return groups;
+}
 const CASE_ROLES = new Set(['bc', 'deformation', 'stress', 'x_bc', 'x_deformation', 'x_stress', 'x_other']);
 const KIND_LABEL = { bc: 'setup', deformation: 'deformation', stress: 'stress', other: 'other result' };
 const LAYOUT_NAMES = { side: 'Side by side', stack: 'Stacked', separate: 'One per slide' };
@@ -59,8 +99,12 @@ const BASIS_OPTIONS = [
 // ───────────────────────────── state ─────────────────────────────
 const freshBuild = () => ({ key: null, slides: [], notes: [], name: 'FEA_Report', status: 'idle', error: '', cur: 0, sig: '', pdfMethod: null,
                             running: false, again: false, promise: null, downloaded: false });
+// pictures that are chosen but not read yet (the engineer picks them folder by folder - see bindUpload)
+let STAGE = [];            // [{name, size, file}]
+let STAGE_BATCH = [];      // index into STAGE where the last "add" started (Back removes that batch)
 const S = {
   status: null, sid: null, took: 0, skipped: [], images: [], cover: {}, short: '', fos: 1.3, fosText: '1.3', units: '',
+  haveSession: false,
   mat: { rows: [], gov: 0 }, defLimit: '', showUtil: true, geometry: [], meshes: [], meshStats: {}, assumed: {}, assumeCustom: '',
   layouts: { results: 'auto', geometry: 'auto', bc: 'auto', extras: 'auto' },
   cases: [], warnings: [], checks: [], suggest: null, layoutPlan: null, missing: 'skip', manual: false, build: freshBuild(), dlBusy: false,
@@ -126,7 +170,40 @@ function show(stage) {
   for (const s of ['upload', 'review']) $('#s-' + s).hidden = s !== stage;
   $('#bar').hidden = stage !== 'review';
   setStep(stage);
+  if (stage === 'upload') renderSessionBar();
   window.scrollTo({ top: 0 });
+}
+
+// ───────────────────────────── going back / starting over ─────────────────────────────
+function backToUpload() {
+  show('upload');
+  renderStage();
+}
+
+function renderSessionBar() {
+  const bar = $('#session-bar'); if (!bar) return;
+  if (!S.haveSession || !S.sid) { bar.hidden = true; bar.replaceChildren(); return; }
+  bar.hidden = false;
+  bar.replaceChildren(h('div', { class: 'resume' },
+    h('div', { class: 'grow' }, h('b', {}, `A report is already open (${S.images.length} pictures).`), h('br'),
+      h('span', {}, 'Add pictures from another folder below - they join this report. Or start a fresh one.')),
+    h('button', { class: 'primary', type: 'button', onclick: () => show('review') }, 'Re-open the draft'),
+    h('button', { class: 'secondary', type: 'button', onclick: restartAll }, 'Start a new report')));
+}
+
+function restartAll() {
+  modal('Start a new report?', h('div', {}, h('p', {}, 'The pictures and everything you typed in THIS report are thrown away. ' +
+    'The report file you already downloaded is not touched.')), [
+    { label: 'Keep this report', run: null },
+    { label: 'Start over', primary: true, run: async () => {
+        const sid = S.sid;
+        Object.assign(S, { sid: null, haveSession: false, took: 0, skipped: [], images: [], cover: {}, short: '', images2: undefined,
+                           mat: { rows: [], gov: 0 }, defLimit: '', geometry: [], meshes: [], meshStats: {}, assumed: {}, assumeCustom: '',
+                           cases: [], warnings: [], checks: [], suggest: null, layoutPlan: null, build: freshBuild() });
+        STAGE = []; STAGE_BATCH = []; renderStage(); renderSessionBar();
+        if (sid) await post('/api/discard', { sid }).catch(() => {});
+        show('upload');
+      } }]);
 }
 function toast(content, kind = 'ok', ms = 9000) {
   const t = h('div', { class: 'toast ' + kind, role: 'status' }, h('div', { class: 'tx' }, content),
@@ -172,17 +249,125 @@ function renderChips() {
 
 function bindUpload() {
   const drop = $('#drop'), file = $('#file');
-  file.addEventListener('change', () => { const fl = Array.from(file.files); file.value = ''; if (fl.length) sendFiles(fl); });
+  const stage = f => { const fl = Array.from(f).filter(x => /\.(png|jpe?g|bmp|tiff?|webp)$/i.test(x.name)); if (fl.length) stageFiles(fl); };
+  file.addEventListener('change', () => { stage(file.files); file.value = ''; });
   ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
   ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
-  drop.addEventListener('drop', e => { const fl = Array.from(e.dataTransfer.files); if (fl.length) sendFiles(fl); });
+  drop.addEventListener('drop', e => { const fl = Array.from(e.dataTransfer.files); if (fl.length) stageFiles(fl); });
   window.addEventListener('dragover', e => e.preventDefault());
   window.addEventListener('drop', e => e.preventDefault());
+  $('#btn-add-more').addEventListener('click', () => $('#file').click());
+  $('#btn-add-folder').addEventListener('click', () => { const i = $('#folder'); if (i) i.click(); else showAlert('Your browser cannot pick a whole folder - add the pictures of each folder one by one.', 'warn'); });
+  $('#folder').addEventListener('change', e => { stage(e.target.files); e.target.value = ''; });
+  $('#btn-stage-next').addEventListener('click', nextFromStage);
+  $('#btn-stage-back').addEventListener('click', () => { unstageBatch(); });
+  $('#btn-stage-clear').addEventListener('click', () => { STAGE = []; STAGE_BATCH = []; renderStage(); });
   $('#btn-example').addEventListener('click', loadExample);
-  $('#btn-preview').addEventListener('click', () => { const c = $('#pv-card'); if (c) c.scrollIntoView({ block: 'start' }); buildNow().catch(() => {}); });
+  $('#btn-preview').addEventListener('click', () => { const c = $('#pv-card'); if (c) c.scrollIntoView({ block: 'start', behavior: 'smooth' }); buildNow().catch(() => {}); });
+  $('#btn-back').addEventListener('click', backToUpload);
   $('#btn-pdf').addEventListener('click', () => downloadReport('pdf'));
   $('#btn-pptx').addEventListener('click', () => downloadReport('pptx'));
   bindSlideBox();
+}
+
+function stageFiles(files) {
+  const known = new Set(STAGE.map(s => s.name + s.size));
+  const at = STAGE.length;                                   // where this batch starts: "Back" cuts back to here
+  let dup = 0, added = 0;
+  for (const f of files) {
+    if (known.has(f.name + f.size)) { dup++; continue; }
+    known.add(f.name + f.size);
+    STAGE.push({ name: f.name, size: f.size, file: f });
+    added++;
+  }
+  if (added) STAGE_BATCH.push(at);
+  renderStage();
+  if (dup) toast(`${dup} file${dup > 1 ? 's' : ''} were already in the list - added once.`, 'info', 6000);
+}
+
+function unstageBatch() {
+  if (!STAGE_BATCH.length) { STAGE = []; renderStage(); return; }
+  const at = STAGE_BATCH.pop();
+  STAGE = STAGE.slice(0, Math.max(0, at));
+  renderStage();
+}
+
+function renderStage() {
+  const wrap = $('#stage-list'), bar = $('#stage-bar');
+  if (!wrap) return;
+  bar.hidden = STAGE.length === 0;
+  $('#drop').classList.toggle('small', STAGE.length > 0);
+  $('#btn-stage-back').disabled = STAGE.length === 0;
+  $('#btn-stage-next').disabled = STAGE.length === 0;
+  $('#stage-count').textContent = `${STAGE.length} picture${STAGE.length === 1 ? '' : 's'} ready`;
+  wrap.replaceChildren(...STAGE.map((s, k) => h('div', { class: 'stg' },
+    h('span', { class: 'stg-n', title: s.name }, s.name),
+    h('span', { class: 'stg-s' }, s.size > 1048576 ? (s.size / 1048576).toFixed(1) + ' MB' : Math.round(s.size / 1024) + ' kB'),
+    h('button', { class: 'icon', type: 'button', title: 'Remove this picture', onclick: () => {
+      STAGE.splice(k, 1); STAGE_BATCH = STAGE_BATCH.map(b => (b > k ? b - 1 : b)); renderStage(); } }, '\u2715'))));
+}
+
+async function nextFromStage() {
+  if (!STAGE.length) return;
+  const pics = STAGE.map(s => s.file);
+  if (S.haveSession && S.sid) { await addFiles(pics); return; }   // adding to a report that is already open
+  const ac = new AbortController();
+  busy(`Reading ${pics.length} picture${pics.length > 1 ? 's' : ''} ... a few seconds`, () => ac.abort());
+  const fd = new FormData();
+  pics.forEach(f => fd.append('files', f, f.name));
+  try {
+    startReview(await api('/api/analyze', { method: 'POST', body: fd, signal: ac.signal }));
+    STAGE = []; STAGE_BATCH = [];
+  } catch (e) {
+    if (ac.signal.aborted) showAlert('Cancelled. The pictures are still in the list - press Next when you are ready.', 'warn');
+    else showAlert(e.message);
+  } finally { busy(false); }
+}
+
+async function addFiles(files) {
+  const ac = new AbortController();
+  busy(`Reading ${files.length} more picture${files.length > 1 ? 's' : ''} ...`, () => ac.abort());
+  const fd = new FormData();
+  fd.append('sid', S.sid);
+  files.forEach(f => fd.append('files', f, f.name));
+  try {
+    const r = await api('/api/analyze_more', { method: 'POST', body: fd, signal: ac.signal });
+    mergeAnalysis(r, true);
+    STAGE = []; STAGE_BATCH = []; renderStage();
+    show('review');
+    toast(`${r.added} picture${r.added === 1 ? '' : 's'} added to this report.` + (r.skipped.length ? ` Skipped: ${r.skipped.join(', ')}` : ''), 'ok', 12000);
+  } catch (e) {
+    if (ac.signal.aborted) showAlert('Cancelled.', 'warn'); else showAlert(e.message);
+  } finally { busy(false); }
+}
+
+function mergeAnalysis(r, keepInputs) {
+  // fold a fresh (or extended) analysis into the page state without losing what the engineer typed
+  S.images = r.images; S.warnings = r.warnings;
+  if (!keepInputs) return;
+  const oldCases = new Map(S.cases.map(c => [c.n, c]));
+  const oldGeo = new Map(S.geometry.map(g => [g.id, g]));
+  const oldMesh = new Map(S.meshes.map(g => [g.id, g]));
+  S.geometry = r.geometry.map(g => { const o = oldGeo.get(g.id); return Object.assign({}, g, { heading: o ? o.heading : g.heading, caption: o ? o.caption : '', attach: o && o.attach !== undefined ? o.attach : g.attach, parent: o ? o.parent : g.parent }); });
+  S.meshes = r.meshes.map(g => { const o = oldMesh.get(g.id); return Object.assign({}, g, { heading: o ? o.heading : g.heading, caption: o ? o.caption : '', attach: o && o.attach !== undefined ? o.attach : g.attach, parent: o ? o.parent : g.parent }); });
+  S.cases = r.cases.map(dc => { const o = oldCases.get(dc.n); return o ? mergeCase(o, dc) : newCase(dc); });
+}
+
+function mergeCase(o, dc) {
+  const c = Object.assign({}, o);
+  const bcChanged = o.bc_id !== dc.bc_id;
+  c.bc_id = dc.bc_id; c.def_id = dc.def_id; c.stress_id = dc.stress_id;
+  c.stress_red_px = dc.stress_red_px; c.stress_legend = dc.stress_legend; c.stress_unit = dc.stress_unit; c.def_unit = dc.def_unit;
+  c.gravity = dc.gravity; c.legend_px = dc.legend_px; c.deck = dc.deck; c.model = dc.model;
+  c.extras = dc.extras.map(e => {
+    const oe = (o.extras || []).find(x => x.id === e.id);
+    return Object.assign({}, e, { heading: oe ? oe.heading : e.heading, caption: oe ? oe.caption : '',
+                                  attach: e.attach !== undefined ? e.attach : true, pos: e.pos || 'auto' });
+  });
+  if (bcChanged) { c.bc_items = dc.bc_items.slice(); c.bc_legend = dc.bc_legend.slice(); c.name = dc.name; c.subtitle = dc.subtitle; c.short_name = dc.short_name; }
+  if (o.def_id !== dc.def_id) c.def_max = nice(dc.def_max);
+  if (o.stress_id !== dc.stress_id) c.stress_max = nice(dc.stress_max);
+  return c;
 }
 
 async function sendFiles(files) {
@@ -232,7 +417,8 @@ function resume(r) {
   for (const k of STATE_KEYS) if (r.state[k] !== undefined) S[k] = r.state[k];
   S.checks = []; S.suggest = null; S.layoutPlan = null; S.build = freshBuild(); S.missing = r.state.missing || S.missing;
   $('#resume').replaceChildren();
-  show('review'); renderReview(); scheduleDerive(); setTimeout(() => buildNow().catch(() => {}), 60);
+  S.haveSession = true;
+  show('review'); renderReview(); scheduleDerive();
 }
 
 // ───────────────────────────── start the review ─────────────────────────────
@@ -241,7 +427,8 @@ function newCase(dc) {
     def_max: nice(dc.def_max), stress_max: nice(dc.stress_max), notes: [], texts: {}, dirty: {}, obs: [], exceeds: null, tier: null,
     needsBasis: false, bc_items: dc.bc_items.slice(), bc_legend: (dc.bc_legend || []).slice(),
     basis: '', sing_loc: '', stress_away: '', loc_stress: '', loc_def: '', react_applied: '', react_sum: '', layout: '', bc_layout: '',
-    extras: (dc.extras || []).map(e => Object.assign({}, e, { caption: '' })),
+    extras: (dc.extras || []).map(e => Object.assign({}, e, { caption: '', attach: e.attach !== undefined ? e.attach : true,
+                                                              pos: e.pos || 'auto', parent: e.parent !== null && e.parent !== undefined ? e.parent : null })),
   });
 }
 
@@ -261,13 +448,13 @@ function startReview(r) {
   S.meshStats = { type: '', elements: '', nodes: '', size: '', skew_avg: '', skew_max: '', oq_min: '' };
   S.assumed = {}; S.assumeCustom = '';
   S.layouts = { results: 'auto', geometry: 'auto', bc: 'auto', extras: 'auto' };
-  S.geometry = r.geometry.map(g => ({ id: g.id, heading: g.heading, caption: '' }));
-  S.meshes = r.meshes.map(g => ({ id: g.id, heading: g.heading, caption: '' }));
+  S.geometry = r.geometry.map(g => ({ id: g.id, heading: g.heading, caption: '', parent: g.parent || null, attach: !!g.attach }));
+  S.meshes = r.meshes.map(g => ({ id: g.id, heading: g.heading, caption: '', parent: g.parent || null, attach: !!g.attach }));
   S.cases = r.cases.map(newCase);
+  S.haveSession = true;
   show('review');
   renderReview();
-  scheduleDerive();
-  setTimeout(() => buildNow().catch(() => {}), 60);                 // the preview appears by itself, nobody has to ask for it
+  scheduleDerive();                       // the preview is NOT built here - the engineer asks for it (council item U3)
 }
 
 // ───────────────────────────── review page ─────────────────────────────
@@ -307,6 +494,7 @@ function readSummary(i) {
   if (['deformation', 'stress', 'x_deformation', 'x_stress', 'x_other'].includes(i.role))
     bits.push(i.max !== null && i.max !== undefined ? `Max ${i.max} ${i.unit || ''}` : 'Max not read');
   if (i.role === 'x_other' && i.result_kind) bits.push(i.result_kind);
+  if (i.view_kind) bits.push(i.view_kind === 'section' ? 'section view' : 'zoom / detail view');
   if (i.role === 'bc' || i.role === 'x_bc') bits.push(`${i.bc_legend.length} load / support entries`);
   if (i.role === 'geometry') bits.push(i.z_dir === 'up' ? 'Z axis points up: top view' : i.z_dir === 'down' ? 'Z axis points down: bottom view' : 'view direction unknown');
   if (i.role === 'mesh') bits.push('mesh pattern');
@@ -318,9 +506,11 @@ function readSummary(i) {
 
 function renderReview() {
   const root = $('#s-review');
-  const parts = [introCard(), previewCard(), checksCard(), picturesCard(), coverCard(), materialCard(), layoutCard(), geometryCard(), assumptionsCard()];
+  // the preview is the LAST card: you work top to bottom and look at the report when you ask for it (council item U3)
+  const parts = [introCard(), checksCard(), picturesCard(), coverCard(), materialCard(), layoutCard(), geometryCard(), assumptionsCard()];
   if (S.cases.length) S.cases.forEach((c, k) => parts.push(caseCard(c, k)));
   else parts.push(card('7', 'Load cases', 'No load case found. Use the pictures table above to say which pictures are setup, deformation and stress pictures.'));
+  parts.push(previewCard());
   const dl = h('div', { hidden: true });
   for (const k of HIST_KEYS) dl.append(h('datalist', { id: 'dl-' + k }, hist(k).map(v => h('option', { value: v }))));
   parts.push(dl);
@@ -331,7 +521,7 @@ function renderReview() {
 function introCard() {
   return h('section', { class: 'card intro' },
     h('h2', {}, `I read ${S.images.length} picture${S.images.length > 1 ? 's' : ''} in ${S.took} s. Here is the first draft.`),
-    h('p', {}, 'The preview below is your real report and it updates as you type. ', h('span', { class: 'need-legend' }, 'Yellow boxes'),
+    h('p', {}, 'The preview at the BOTTOM of this page is your real report. It is built when you press "Update preview" - never by itself. ', h('span', { class: 'need-legend' }, 'Yellow boxes'),
       ' need your input, but nothing blocks you: you can download at any time, and whatever is not filled in appears as [text in brackets] in the report. ',
       h('button', { class: 'link', type: 'button', onclick: () => { show('upload'); } }, 'Use other pictures')),
     S.manual ? h('p', { class: 'manual-note' }, h('b', {}, 'Manual mode: '),
@@ -363,23 +553,76 @@ function localChecks() {
 
 // ----- pictures table
 function picturesCard() {
-  const rows = S.images.map(img => {
-    const role = h('select', { class: 'sel', 'data-need': 'role', 'data-label': `What is ${img.name}`, 'aria-label': `What is ${img.name}` },
-      ROLES.filter(r => r[0] !== 'unknown' || img.role === 'unknown').map(([v, t]) => h('option', { value: v, selected: v === img.role }, t)));
+  const rows = [];
+  S.images.forEach(img => {
+    const role = h('select', { class: 'sel', 'data-need': 'role', 'data-label': `What is ${img.name}`, 'aria-label': `What is ${img.name}` }, roleOptions(img));
     const isCase = CASE_ROLES.has(img.role);
     const cs = h('select', { class: 'cs', disabled: !isCase, 'data-need': isCase ? 'req' : null, 'data-label': `Load case of ${img.name}`, 'aria-label': `Load case of ${img.name}` },
       isCase && !img.case ? h('option', { value: '', selected: true }, 'Choose ...') : null,
       Array.from({ length: 12 }, (_, i) => i + 1).map(n => h('option', { value: n, selected: n === img.case }, 'Case ' + n)));
-    role.addEventListener('change', () => { img.role = role.value; if (CASE_ROLES.has(img.role) && !img.case) img.case = 1; regroup(); });
+    role.addEventListener('change', () => {
+      const [r, vk, rk] = role.value.split('|');
+      img.role = r; img.view_kind = vk || ''; img.rkind = rk || '';
+      if (CASE_ROLES.has(img.role) && !img.case) img.case = 1;
+      regroup();
+    });
     cs.addEventListener('change', () => { img.case = cs.value ? parseInt(cs.value, 10) : null; regroup(); });
     const attn = img.notes.length || img.confidence === 'low' || img.role === 'unknown';
-    return h('tr', { class: attn ? 'attn' : '' }, h('td', {}, thumb(img.id)), h('td', { class: 'fn' }, img.name),
-      h('td', {}, role), h('td', {}, cs), h('td', { class: 'read' }, readSummary(img)));
+    const more = h('tr', { class: 'picmore', hidden: true }, h('td', { colspan: 5 }, pictureEvidence(img)));
+    const tg = h('button', { class: 'icon', type: 'button', title: 'Show what I read in this picture',
+      onclick: () => { more.hidden = !more.hidden; tg.classList.toggle('on', !more.hidden); } }, 'i');
+    rows.push(h('tr', { class: attn ? 'attn' : '' }, h('td', {}, h('div', { class: 'thwrap' }, thumb(img.id), tg)),
+      h('td', { class: 'fn' }, img.name), h('td', {}, role), h('td', {}, cs), h('td', { class: 'read' }, readSummary(img))), more);
   });
-  return card('1', 'Pictures', 'I sorted your pictures like this. If one is wrong, change it here and the draft is rebuilt. A second picture of the same kind (a section or detail view) becomes an "extra view" of its load case.',
+  return card('1', 'Pictures', 'I sorted your pictures like this - the load case comes from the ANSYS title block of each picture (the "i" shows what I read). ' +
+    'If one is wrong, change it here. A section or a zoom is attached to the picture it belongs to and goes on the SAME slide.',
     h('div', { class: 'scroll' }, h('table', { class: 'pics' },
       h('thead', {}, h('tr', {}, ['', 'File', 'What is it?', 'Load case', 'What I read'].map(t => h('th', {}, t)))), h('tbody', {}, rows))));
 }
+
+function pictureEvidence(img) {
+  const bits = [];
+  bits.push(h('div', { class: 'ev' }, h('b', {}, 'ANSYS title block: '),
+    h('span', {}, img.headline || '(none read - the type was guessed from the file name)')));
+  bits.push(h('div', { class: 'ev' }, h('b', {}, 'Deck (project): '), h('span', {}, img.deck || '(not readable)'),
+    '  \u00b7  ', h('b', {}, 'case letter: '), h('span', {}, img.letter ? `${img.letter}${img.letter_conf === 'low' ? ' (read without its colon - check it)' : ''}` : '(none readable)'),
+    '  \u00b7  ', h('b', {}, 'load case: '), h('span', {}, img.case ? `Case ${img.case}` : 'not assigned yet')));
+  const ex = extraOf(img.id);
+  if (ex) {
+    const parents = S.cases.find(c => c.n === img.case);
+    const opts = [['def_id', 'the total-deformation picture'], ['stress_id', 'the von-Mises picture'], ['bc_id', 'the setup picture']]
+      .filter(([k]) => parents && parents[k] !== null && parents[k] !== undefined && parents[k] !== img.id);
+    const psel = h('select', { 'aria-label': `Which picture is ${img.name} attached to` },
+      opts.map(([k, t]) => h('option', { value: parents[k], selected: ex.parent === parents[k] }, t)));
+    psel.addEventListener('change', () => { ex.parent = parseInt(psel.value, 10); regroup(); });
+    const asel = h('select', { 'aria-label': 'Where this view is placed' },
+      h('option', { value: 'same', selected: !!ex.attach }, 'On the same slide as that picture'),
+      h('option', { value: 'own', selected: !ex.attach }, 'On a slide of its own'));
+    asel.addEventListener('change', () => { ex.attach = asel.value === 'same'; scheduleSave(); renderPreviewStale(); });
+    const ssel = h('select', { 'aria-label': 'Which side the detail column is on' },
+      h('option', { value: 'auto', selected: (ex.pos || 'auto') === 'auto' }, 'Side: where the detail sits in the picture'),
+      h('option', { value: 'right', selected: ex.pos === 'right' }, 'Side: right'),
+      h('option', { value: 'left', selected: ex.pos === 'left' }, 'Side: left'),
+      h('option', { value: 'nomark', selected: ex.pos === 'nomark' }, 'Side: right, without the region mark'));
+    ssel.addEventListener('change', () => { ex.pos = ssel.value; scheduleSave(); renderPreviewStale(); });
+    const m = ex.match;
+    bits.push(h('div', { class: 'ev' }, h('b', {}, 'Attached to: '), psel, ' ', asel, ' ', ssel));
+    bits.push(h('div', { class: 'ev' }, h('b', {}, 'Why: '), h('span', {},
+      m ? `I found this view inside "${ex.parent_name}" - the marked region is ${m.side === 'left' ? 'on the left' : 'on the right'}, ` +
+          `${m.row === 'top' ? 'upper' : 'lower'} half (${Math.round(m.score * 100)} % alike).`
+        : (ex.view_kind === 'detail' ? `This looks like a zoomed view, but I could not find that region inside "${ex.parent_name}" - it is placed beside it without a mark.`
+                                     : ex.parent_why ? `It is attached to ${ex.parent_name} (${ex.parent_why}).` : `It is attached to ${ex.parent_name}.`))));
+    if (ex.ambiguous) bits.push(h('div', { class: 'ev warn' }, 'Two pictures of this case match this view almost equally well - check the attachment above.'));
+  }
+  (img.notes || []).forEach(n => bits.push(h('div', { class: 'ev warn' }, n)));
+  return h('div', { class: 'evbox' }, bits);
+}
+
+function extraOf(id) {
+  for (const c of S.cases) { const e = (c.extras || []).find(x => x.id === id); if (e) return e; }
+  return null;
+}
+function renderPreviewStale() { scheduleBuild(); }
 
 // ----- report details
 function coverCard() {
@@ -526,9 +769,17 @@ function renderLayoutCard() {
 
 // ----- geometry & mesh
 function viewRow(v, k, n, label) {
+  const first = (label === 'view' ? S.geometry : S.meshes)[0];
+  const canAttach = n > 1 && first && first.id !== v.id;
+  const att = h('input', { type: 'checkbox', checked: !!v.attach && canAttach, disabled: !canAttach, 'aria-label': `Attach ${label} ${k + 1} to the first view` });
+  att.addEventListener('change', () => {
+    v.attach = att.checked; v.parent = att.checked ? first.id : null;
+    scheduleSave(); scheduleBuild(); renderPreview();
+  });
   return h('div', { class: 'view' }, thumb(v.id, 'thumb big', 320),
     n > 1 ? h('div', { class: 'f' }, field(`Heading of ${label} ${k + 1}`, v, 'heading', { need: 'bracket', hint: k === 0 && label === 'view' ? 'Taken from the axis arrows in the picture' : null }),
-      field('Caption', v, 'caption', { optional: true }))
+      field('Caption', v, 'caption', { optional: true }),
+      h('label', { class: 'chk' }, att, h('span', {}, `Show on the same slide as "${(first && first.heading) || 'the first view'}"`)))
           : h('div', { class: 'f' }, h('span', {}, label === 'view' ? 'Geometry' : 'Mesh'), h('small', {}, 'One picture: it gets its own slide.'),
               field('Caption', v, 'caption', { optional: true })));
 }
@@ -611,7 +862,7 @@ function caseCard(c, k) {
       h('div', { class: 'resbox' }, h('div', {}, lf('Maximum von-Mises stress', h('div', { class: 'unit' }, strEl, h('em', {}, 'MPa'))), h('div', { class: 'verdict-line', 'data-verdict': c.n })),
         evid(c.stress_id, 'legend', 'the legend I read', 420))),
     h('div', { 'data-basisbox': c.n }),
-    h('h3', { class: 'mini' }, 'Additional views ', h('small', {}, '(section, detail, other result types: each gets its own slide)')),
+    h('h3', { class: 'mini' }, 'Additional views ', h('small', {}, '(a section or a zoom is drawn on the SAME slide as the picture it belongs to, with the region marked; other result plots may get their own slide)')),
     xBox,
     h('details', { class: 'wording' }, h('summary', {}, 'Engineering evidence (optional): where is the maximum, reaction-force check'),
       h('div', { class: 'in' }, h('div', { class: 'grid' },
@@ -687,11 +938,29 @@ function renderExtras(c, box) {
     const meta = [];
     if (e.max !== null && e.max !== undefined) meta.push(`Max ${e.max} ${e.unit || ''}`);
     if (e.auto) meta.push('chosen automatically: the main plot has the higher Max');
+    const where = h('select', { 'aria-label': `Where ${img.name} is placed`, class: 'sel' },
+      h('option', { value: 'same', selected: !!e.attach }, `On the same slide as ${e.parent_name || 'its picture'}`),
+      h('option', { value: 'own', selected: !e.attach }, 'On a slide of its own'));
+    where.addEventListener('change', () => { e.attach = where.value === 'same'; scheduleSave(); scheduleBuild(); renderPreview(); });
+    const side = h('select', { 'aria-label': `Which side ${img.name} goes on`, class: 'sel' },
+      h('option', { value: 'auto', selected: (e.pos || 'auto') === 'auto' }, 'next to the region it shows'),
+      h('option', { value: 'right', selected: e.pos === 'right' }, 'on the right'),
+      h('option', { value: 'left', selected: e.pos === 'left' }, 'on the left'),
+      h('option', { value: 'nomark', selected: e.pos === 'nomark' }, 'on the right, no region mark'));
+    side.addEventListener('change', () => { e.pos = side.value; scheduleSave(); scheduleBuild(); renderPreview(); });
+    const m = e.match;
+    const found = m ? `I found this view inside "${e.parent_name}" - the marked region is ${m.side === 'left' ? 'left' : 'right'}, ` +
+      `${m.row === 'top' ? 'upper' : 'lower'} half (${Math.round(m.score * 100)} % alike).`
+      : (e.view_kind === 'detail' ? `Zoomed view: I could not find that region inside "${e.parent_name}", so no mark is drawn.`
+                                  : (e.parent_why ? `Attached to ${e.parent_name} - ${e.parent_why}.` : `Attached to ${e.parent_name}.`));
     return h('div', { class: 'xitem' }, thumb(e.id, 'thumb', 220),
       h('div', {}, h('span', { class: 'kindtag' }, KIND_LABEL[e.kind] || e.kind),
+        e.view_kind ? h('span', { class: 'kindtag view' }, e.view_kind === 'section' ? 'section' : 'zoom') : null,
         h('span', { class: 'meta' }, img.name || ''),
         field('Heading (also the slide title)', e, 'heading', { need: 'bracket', label: `Case ${c.n}: heading of the additional view ${img.name || ''}`, onchange: scheduleDerive }),
         field('Caption', e, 'caption', { optional: true, label: 'Caption' }),
+        h('div', { class: 'xwhere' }, h('span', {}, 'Placement: '), where, ' ', h('span', {}, ' '), side),
+        h('div', { class: 'meta' + (m ? ' ok' : '') }, found),
         h('div', { class: 'meta' }, meta.join('  \u00b7  '))),
       h('div', { class: 'acts' }, acts));
   }));
@@ -767,26 +1036,25 @@ function renderVerdicts() {
 async function regroup() {
   busy('Updating the draft ...');
   try {
-    const r = await post('/api/regroup', { sid: S.sid, assign: S.images.map(i => ({ id: i.id, role: i.role, case: i.case })) });
+    const r = await post('/api/regroup', { sid: S.sid, assign: S.images.map(i => {
+      const e = extraOf(i.id);
+      const g = S.geometry.find(x => x.id === i.id) || S.meshes.find(x => x.id === i.id);
+      return { id: i.id, role: choiceOf(i), case: i.case, view_kind: i.view_kind || '', rkind: i.rkind || '',
+               parent: e ? e.parent : (g ? g.parent : (i.parent || null)),
+               attach: e ? e.attach : (g ? g.attach : (i.attach || null)), pos: e ? (e.pos || 'auto') : (i.pos || 'auto') };
+    }) });
     S.images = r.images; S.warnings = r.warnings;
     const keep = (oldList, id) => oldList.find(o => o.id === id);
     const og = S.geometry, om = S.meshes;
-    S.geometry = r.geometry.map(g => { const o = keep(og, g.id); return { id: g.id, heading: o ? o.heading : g.heading, caption: o ? o.caption : '' }; });
-    S.meshes = r.meshes.map(g => { const o = keep(om, g.id); return { id: g.id, heading: o ? o.heading : g.heading, caption: o ? o.caption : '' }; });
+    S.geometry = r.geometry.map(g => { const o = keep(og, g.id); return { id: g.id, heading: o ? o.heading : g.heading, caption: o ? o.caption : '',
+      parent: o && o.parent !== undefined && o.parent !== null ? o.parent : g.parent, attach: o && o.attach !== undefined ? o.attach : !!g.attach }; });
+    S.meshes = r.meshes.map(g => { const o = keep(om, g.id); return { id: g.id, heading: o ? o.heading : g.heading, caption: o ? o.caption : '',
+      parent: o && o.parent !== undefined && o.parent !== null ? o.parent : g.parent, attach: o && o.attach !== undefined ? o.attach : !!g.attach }; });
     const old = new Map(S.cases.map(c => [c.n, c]));
     S.cases = r.cases.map(dc => {
       const o = old.get(dc.n);
       if (!o) return newCase(dc);
-      const c = Object.assign({}, o);
-      const bcChanged = o.bc_id !== dc.bc_id;
-      c.bc_id = dc.bc_id; c.def_id = dc.def_id; c.stress_id = dc.stress_id;
-      c.stress_red_px = dc.stress_red_px; c.stress_legend = dc.stress_legend; c.stress_unit = dc.stress_unit; c.def_unit = dc.def_unit;
-      c.gravity = dc.gravity; c.legend_px = dc.legend_px;
-      c.extras = dc.extras.map(e => { const oe = (o.extras || []).find(x => x.id === e.id); return Object.assign({}, e, { heading: oe ? oe.heading : e.heading, caption: oe ? oe.caption : '' }); });
-      if (bcChanged) { c.bc_items = dc.bc_items.slice(); c.bc_legend = dc.bc_legend.slice(); c.name = dc.name; c.subtitle = dc.subtitle; c.short_name = dc.short_name; }
-      if (o.def_id !== dc.def_id) c.def_max = nice(dc.def_max);
-      if (o.stress_id !== dc.stress_id) c.stress_max = nice(dc.stress_max);
-      return c;
+      return mergeCase(o, dc);
     });
     renderReview(); scheduleDerive();
   } catch (e) { showAlert(e.message); }
@@ -802,12 +1070,14 @@ function deriveBody() {
   const row = govRow() || {};
   return { sid: S.sid, allowable: govAllow(), yield: num(row.yield), fos: S.fos, short: S.short, show_utilisation: S.showUtil,
     def_limit: num(S.defLimit), material: { E: row.E, nu: row.nu, rho: row.rho }, mesh_stats: S.meshStats, assumptions: assumptionsList(),
-    layouts: S.layouts, geometry: S.geometry.map(g => ({ id: g.id })), meshes: S.meshes.map(g => ({ id: g.id })),
+    layouts: S.layouts, geometry: S.geometry.map(g => ({ id: g.id, parent: g.parent, attach: g.attach })),
+    meshes: S.meshes.map(g => ({ id: g.id, parent: g.parent, attach: g.attach })),
     cases: S.cases.map(c => ({ n: c.n, def_max: num(c.def_max), stress_max: num(c.stress_max), red_px: c.stress_red_px, legend: c.stress_legend || [],
       stress_unit: c.stress_unit, def_unit: c.def_unit, basis: c.basis, sing_loc: c.sing_loc, stress_away: c.stress_away, loc_stress: c.loc_stress,
       loc_def: c.loc_def, react_applied: c.react_applied, react_sum: c.react_sum, gravity: c.gravity, legend_px: c.legend_px, layout: c.layout,
       bc_layout: c.bc_layout, bc_id: c.bc_id, def_id: c.def_id, stress_id: c.stress_id, bc_items: c.bc_items, notes: c.notes,
-      extras: c.extras.map(e => ({ id: e.id, kind: e.kind, heading: e.heading, max: e.max })) })) };
+      extras: c.extras.map(e => ({ id: e.id, kind: e.kind, heading: e.heading, max: e.max, attach: e.attach, pos: e.pos || 'auto',
+                                   parent: e.parent, match: e.match || null })) })) };
 }
 
 async function runDerive() {
@@ -881,13 +1151,15 @@ function buildPayload() {
   return {
     sid: S.sid, cover: S.cover, short: S.short, fos: S.fos, yield: num(row.yield), allowable: govAllow(), show_utilisation: S.showUtil, def_limit: num(S.defLimit),
     material: { rows: S.mat.rows.map(r => [r.material, r.item, r.E, r.nu, r.rho, r.yield, String(allowOf(r) ?? '')]), units: S.units },
-    geometry: S.geometry.map(g => ({ id: g.id, heading: g.heading, caption: g.caption })),
-    meshes: S.meshes.map(g => ({ id: g.id, heading: g.heading, caption: g.caption })), mesh_stats: S.meshStats,
+    geometry: S.geometry.map(g => ({ id: g.id, heading: g.heading, caption: g.caption, parent: g.parent, attach: g.attach })),
+    meshes: S.meshes.map(g => ({ id: g.id, heading: g.heading, caption: g.caption, parent: g.parent, attach: g.attach })), mesh_stats: S.meshStats,
     assumptions: assumptionsList(), layouts: S.layouts,
     cases: S.cases.map(c => ({ n: c.n, name: c.name, subtitle: c.subtitle, short_name: c.short_name, bc_id: c.bc_id, def_id: c.def_id,
       stress_id: c.stress_id, bc_items: c.bc_items, notes: c.notes, def_max: c.def_max, stress_max: c.stress_max, basis: c.basis, sing_loc: c.sing_loc,
       stress_away: c.stress_away, loc_stress: c.loc_stress, loc_def: c.loc_def, react_applied: c.react_applied, react_sum: c.react_sum,
-      layout: c.layout, bc_layout: c.bc_layout, legend_px: c.legend_px, extras: c.extras.map(e => ({ id: e.id, kind: e.kind, heading: e.heading, caption: e.caption, max: e.max })),
+      layout: c.layout, bc_layout: c.bc_layout, legend_px: c.legend_px,
+      extras: c.extras.map(e => ({ id: e.id, kind: e.kind, heading: e.heading, caption: e.caption, max: e.max,
+                                   attach: e.attach, pos: e.pos || 'auto', parent: e.parent, match: e.match || null })),
       texts: textsPayload(c) })),
     missing: S.missing,
   };
@@ -912,9 +1184,10 @@ function previewCard() {
   return h('section', { class: 'card pv', id: 'pv-card' },
     h('div', { class: 'pv-head' }, h('h2', {}, 'Report preview'),
       h('span', { class: 'pv-status busy', id: 'pv-status' }, h('i'), h('span', { id: 'pv-status-text' }, 'Preparing ...')),
-      h('button', { class: 'secondary', type: 'button', id: 'pv-refresh', onclick: () => buildNow().catch(() => {}) }, ico('refresh'), 'Refresh'),
+      h('button', { class: 'primary', type: 'button', id: 'pv-refresh', onclick: () => buildNow().catch(() => {}) }, ico('refresh'), h('span', { id: 'pv-refresh-lbl' }, 'Build the preview')),
       h('button', { class: 'secondary', type: 'button', id: 'pv-full', onclick: openSlideBox }, ico('expand'), 'Full screen')),
-    h('p', { class: 'sub' }, 'This is your real report, drawn from the PowerPoint file that is built from what you see below. It updates by itself a moment after you change something.'),
+    h('p', { class: 'sub' }, 'This is your real report, drawn from the PowerPoint file that is built from what you typed above. ',
+      h('b', {}, 'It never rebuilds by itself'), ' - press the button here (or "Preview" in the bar at the bottom) when you want to see it.'),
     h('div', { class: 'pv-stage' }, frame, nav('prev', 'Previous slide', '\u2039', -1), nav('next', 'Next slide', '\u203A', 1)),
     h('div', { class: 'pv-bar' }, h('span', { class: 'pv-count', id: 'pv-count' }), h('span', { class: 'pv-title', id: 'pv-title' })),
     h('div', { class: 'pv-strip', id: 'pv-strip' }),
@@ -930,19 +1203,32 @@ function previewCard() {
 function renderPreview() {
   const card = $('#pv-card'); if (!card) return;
   const B = S.build, n = B.slides.length, has = !!(B.key && n);
-  const MAP = { idle: ['busy', 'Preparing the preview ...'], building: ['busy', 'Updating the preview ...'], stale: ['busy', 'Updating the preview ...'],
+  const stale = has && (B.status === 'stale' || B.status === 'building');
+  const MAP = { idle: ['busy', 'Not built yet - press "Build the preview"'], building: ['busy', has ? 'Updating the preview ...' : 'Building the preview ...'],
+                stale: ['busy', 'Out of date - press "Update preview"'],
                 ok: ['ok', 'Preview is up to date'], error: ['bad', 'The preview could not be made'] };
   const [cls, text] = MAP[B.status] || MAP.idle;
   $('#pv-status').className = 'pv-status ' + cls; $('#pv-status-text').textContent = text;
   const frame = $('#pv-frame'), img = $('#pv-img'), wait = $('#pv-wait');
-  frame.classList.toggle('stale', has && (B.status === 'building' || B.status === 'stale'));
-  wait.hidden = has;
+  frame.classList.toggle('stale', stale);
+  wait.hidden = has && !stale;
+  const lbl = $('#pv-refresh-lbl');
+  if (lbl) lbl.textContent = !has ? 'Build the preview' : (stale ? 'Update preview' : 'Refresh');
+  const pvb = $('#btn-preview');
+  if (pvb) { pvb.classList.toggle('attn', stale || !has); const l = pvb.querySelector('.lbl'); if (l) l.textContent = !has ? 'Preview' : (stale ? 'Update preview' : 'Preview'); }
   if (!has) {
     frame.classList.remove('loading');
     if (B.status === 'error') wait.replaceChildren(h('b', {}, 'The report could not be built.'), h('span', {}, B.error),
       h('button', { class: 'secondary', type: 'button', onclick: () => buildNow().catch(() => {}) }, 'Try again'));
-    else wait.replaceChildren(h('div', { class: 'spin' }), h('span', {}, 'Building the preview ...'));
+    else if (B.status === 'building') wait.replaceChildren(h('div', { class: 'spin' }), h('span', {}, 'Building the preview ...'));
+    else wait.replaceChildren(ico('eye'), h('b', {}, 'The preview stays empty until you ask for it.'),
+      h('span', {}, 'Work through the cards above; when you want to see the report, build it here. ' +
+                    'Downloading the PowerPoint or the PDF builds it too, with exactly what is on the screen.'),
+      h('button', { class: 'primary big', type: 'button', onclick: () => buildNow().catch(() => {}) }, ico('refresh'), 'Build the preview'));
   } else {
+    if (stale) wait.replaceChildren(h('b', {}, 'What you see is the PREVIOUS build.'),
+      h('span', {}, 'Something above changed since. Press "Update preview" (or download) to see the report as it is now.'),
+      h('button', { class: 'primary', type: 'button', onclick: () => buildNow().catch(() => {}) }, ico('refresh'), 'Update preview'));
     const w = slideWidth(), url = slideUrl(B.cur, w);
     if (img.dataset.url !== url) {
       frame.classList.add('loading'); img.dataset.url = url;
@@ -1018,14 +1304,15 @@ function bindSlideBox() {
 
 // ───────────────────────────── building the report in the background ─────────────────────────────
 let buildTimer = null;
-function scheduleBuild(delay = 1400) {
+function scheduleBuild(_delay = 1400) {
+  // the preview updates ONLY when the engineer says so (presses Update preview / Download).  Here we just remember that
+  // what is on the screen no longer matches the report (council items U1 + U3).
   if (!S.sid || $('#s-review').hidden) return;
   const B = S.build;
-  if (JSON.stringify(buildPayload()) === B.sig && B.status === 'ok') { clearTimeout(buildTimer); return; }     // nothing changed
+  if (!B.key || B.status === 'idle' || B.status === 'building') return;
+  if (JSON.stringify(buildPayload()) === B.sig && B.status === 'ok') return;                                  // nothing changed
   if (B.status === 'ok') { B.status = 'stale'; renderPreview(); }
   if (B.downloaded) { B.downloaded = false; setStep('review'); }
-  clearTimeout(buildTimer);
-  buildTimer = setTimeout(() => { buildNow().catch(() => {}); }, delay);
 }
 
 // One build at a time; if something changes while it runs, one more build follows (the latest state always wins).

@@ -36,14 +36,33 @@
     </div>
 
     <div id="resume"></div>
+    <div id="session-bar" hidden></div>
 
     <label id="drop" class="drop" for="file">
       <svg viewBox="0 0 48 48" width="54" height="54" aria-hidden="true"><path d="M24 33V12m0 0l-9 9m9-9l9 9" fill="none" stroke="#2a6fa6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 33v5a3 3 0 003 3h26a3 3 0 003-3v-5" fill="none" stroke="#2a6fa6" stroke-width="3" stroke-linecap="round"/></svg>
       <b>Drag the pictures here</b>
-      <span>or click to choose them &middot; PNG or JPG &middot; put all pictures of the job in together<br>
+      <span>or click to choose them &middot; PNG or JPG &middot; add them folder by folder, in any order, with any names<br>
             (geometry, mesh, and the setup / deformation / stress picture of every load case)</span>
       <input id="file" type="file" multiple accept="image/*,.png,.jpg,.jpeg,.bmp,.tif,.tiff,.webp" hidden>
     </label>
+    <div class="addrow">
+      <button id="btn-add-more" class="secondary" type="button">+ Add pictures</button>
+      <button id="btn-add-folder" class="secondary" type="button">+ Add a whole folder</button>
+      <input id="folder" type="file" multiple webkitdirectory hidden>
+      <span class="hint">Nothing is read yet - you collect the pictures first.</span>
+    </div>
+    <div id="stage-bar" class="stage" hidden>
+      <div class="stage-head">
+        <b id="stage-count">0 pictures ready</b>
+        <span class="grow"></span>
+        <button id="btn-stage-back" class="secondary" type="button">&lsaquo; Back (undo the last add)</button>
+        <button id="btn-stage-clear" class="secondary" type="button">Clear the list</button>
+      </div>
+      <div id="stage-list" class="stage-list"></div>
+      <div class="stage-next">
+        <button id="btn-stage-next" class="primary big" type="button">Next: read the pictures &rsaquo;</button>
+      </div>
+    </div>
     <div class="try"><button id="btn-example" class="link" type="button" hidden>No pictures at hand? Try it with the 9 example pictures</button></div>
 
     <div class="how">
@@ -63,6 +82,7 @@
 <footer id="bar" class="bar" hidden>
   <div class="bar-in">
     <div id="bar-msg" class="bar-msg"></div>
+    <button id="btn-back" class="secondary" type="button" title="Back to the pictures">&lsaquo; Pictures</button>
     <button id="btn-preview" class="secondary" type="button"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.7-7 10-7 10 7 10 7-3.7 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><span class="lbl">Preview</span></button>
     <button id="btn-pdf" class="secondary" type="button" data-dl="pdf"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg><span class="dlw">Download </span>PDF</button>
     <button id="btn-pptx" class="primary" type="button" data-dl="pptx"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 20h14"/></svg><span class="dlw">Download </span>PowerPoint</button>
