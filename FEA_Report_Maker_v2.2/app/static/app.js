@@ -156,6 +156,16 @@ function showAlert(content, kind = 'bad') {
   a.scrollIntoView({ block: 'nearest' });
 }
 const hideAlert = () => { $('#alert').hidden = true; };
+window.addEventListener('error', ev => {
+  console.error('page error:', ev.error || ev.message);
+  try { showAlert(h('div', {}, h('b', {}, 'The page hit a snag: '), String(ev.message),
+    ' Nothing you typed is lost. Please send a screenshot of this message.'), 'warn'); } catch (e) { /* ignore */ }
+});
+window.addEventListener('unhandledrejection', ev => {
+  console.error('page rejection:', ev.reason);
+  try { showAlert(h('div', {}, h('b', {}, 'The page hit a snag: '), String((ev.reason && ev.reason.message) || ev.reason),
+    ' Nothing you typed is lost. Please send a screenshot of this message.'), 'warn'); } catch (e) { /* ignore */ }
+});
 const ICONS = {
   refresh: '<path d="M20 12a8 8 0 1 1-2.5-5.8M20 4v5.2h-5.2"/>', expand: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
   download: '<path d="M12 4v11m0 0l-4.5-4.5M12 15l4.5-4.5M5 20h14"/>', eye: '<path d="M2 12s3.7-7 10-7 10 7 10 7-3.7 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
@@ -228,14 +238,20 @@ async function boot() {
   bindUpload();
   try { S.status = await api('/api/status'); }
   catch (e) { showAlert(e.message); return; }
-  renderChips();
-  $('#btn-example').hidden = !S.status.has_examples;
-  S.missing = loadSaved().missing || S.status.settings.missing_pictures || 'skip';
-  if (!S.status.ocr) {
-    showAlert(h('div', {}, h('b', {}, 'Heads-up: '), S.status.ocr_message, ' ',
-      h('button', { class: 'link', type: 'button', onclick: () => location.reload() }, 'Check again')), 'warn');
+  try {
+    renderChips();
+    $('#btn-example').hidden = !S.status.has_examples;
+    S.missing = loadSaved().missing || S.status.settings.missing_pictures || 'skip';
+    if (!S.status.ocr) {
+      showAlert(h('div', {}, h('b', {}, 'Heads-up: '), S.status.ocr_message, ' ',
+        h('button', { class: 'link', type: 'button', onclick: () => location.reload() }, 'Check again')), 'warn');
+    }
+    checkResume();
+  } catch (e) {
+    console.error('boot:', e);
+    showAlert(h('div', {}, h('b', {}, 'The page could not finish starting: '), e.message,
+      ' Please reload once - if it returns, send a screenshot of this message.'), 'warn');
   }
-  checkResume();
 }
 
 function renderChips() {
@@ -271,6 +287,10 @@ function bindUpload() {
 }
 
 function stageFiles(files) {
+  const usable = [...files].filter(f => f && f.name && f.size > 0);
+  if (usable.length !== files.length) toast('Some entries had no name or no content - they were left out.', 'warn', 8000);
+  if (!usable.length) return;
+  files = usable;
   const known = new Set(STAGE.map(s => s.name + s.size));
   const at = STAGE.length;                                   // where this batch starts: "Back" cuts back to here
   let dup = 0, added = 0;
@@ -309,7 +329,8 @@ function renderStage() {
 
 async function nextFromStage() {
   if (!STAGE.length) return;
-  const pics = STAGE.map(s => s.file);
+  const pics = STAGE.map(s => s.file).filter(f => f && f.name && f.size > 0);
+  if (!pics.length) { showAlert('The pictures in the list could not be read any more (the browser dropped them). Add them again - nothing else is lost.'); return; }
   if (S.haveSession && S.sid) { await addFiles(pics); return; }   // adding to a report that is already open
   const ac = new AbortController();
   busy(`Reading ${pics.length} picture${pics.length > 1 ? 's' : ''} ... a few seconds`, () => ac.abort());
@@ -337,20 +358,25 @@ async function addFiles(files) {
     show('review');
     toast(`${r.added} picture${r.added === 1 ? '' : 's'} added to this report.` + (r.skipped.length ? ` Skipped: ${r.skipped.join(', ')}` : ''), 'ok', 12000);
   } catch (e) {
-    if (ac.signal.aborted) showAlert('Cancelled.', 'warn'); else showAlert(e.message);
+    if (ac.signal.aborted) { showAlert('Cancelled.', 'warn'); return; }
+    if (/not found|no such session|404|restarted/i.test(e.message)) {          // the old session died (program restarted): start a fresh one with these pictures
+      S.haveSession = false; S.sid = null;
+      return nextFromStage();
+    }
+    showAlert(e.message);
   } finally { busy(false); }
 }
 
 function mergeAnalysis(r, keepInputs) {
   // fold a fresh (or extended) analysis into the page state without losing what the engineer typed
-  S.images = r.images; S.warnings = r.warnings;
+  S.images = r.images || S.images; S.warnings = r.warnings || [];
   if (!keepInputs) return;
   const oldCases = new Map(S.cases.map(c => [c.n, c]));
   const oldGeo = new Map(S.geometry.map(g => [g.id, g]));
   const oldMesh = new Map(S.meshes.map(g => [g.id, g]));
-  S.geometry = r.geometry.map(g => { const o = oldGeo.get(g.id); return Object.assign({}, g, { heading: o ? o.heading : g.heading, caption: o ? o.caption : '', attach: o && o.attach !== undefined ? o.attach : g.attach, parent: o ? o.parent : g.parent }); });
-  S.meshes = r.meshes.map(g => { const o = oldMesh.get(g.id); return Object.assign({}, g, { heading: o ? o.heading : g.heading, caption: o ? o.caption : '', attach: o && o.attach !== undefined ? o.attach : g.attach, parent: o ? o.parent : g.parent }); });
-  S.cases = r.cases.map(dc => { const o = oldCases.get(dc.n); return o ? mergeCase(o, dc) : newCase(dc); });
+  S.geometry = (r.geometry || []).map(g => { const o = oldGeo.get(g.id); return Object.assign({}, g, { heading: o ? o.heading : g.heading, caption: o ? o.caption : '', attach: o && o.attach !== undefined ? o.attach : g.attach, parent: o ? o.parent : g.parent }); });
+  S.meshes = (r.meshes || []).map(g => { const o = oldMesh.get(g.id); return Object.assign({}, g, { heading: o ? o.heading : g.heading, caption: o ? o.caption : '', attach: o && o.attach !== undefined ? o.attach : g.attach, parent: o ? o.parent : g.parent }); });
+  S.cases = (r.cases || []).map(dc => { const o = oldCases.get(dc.n); return o ? mergeCase(o, dc) : newCase(dc); });
   if ((r.match_pending || []).length) {
     S.matchPending = new Set([...(S.matchPending || []), ...r.match_pending]);
     pollMatches();
@@ -471,11 +497,13 @@ function newCase(dc) {
 
 function startReview(r) {
   hideAlert();
-  Object.assign(S, { sid: r.sid, took: r.took, skipped: r.skipped || [], images: r.images, warnings: r.warnings, checks: [], suggest: null,
+  const cv = r.cover || {};
+  Object.assign(S, { sid: r.sid, took: r.took, skipped: r.skipped || [], images: r.images || [], warnings: r.warnings || [],
+                     checks: [], suggest: null,
                      layoutPlan: null, build: freshBuild(), manual: !!r.manual });
-  S.cover = { title: r.cover.title, report_no: r.cover.report_no, date: r.cover.date, client: r.cover.client,
+  S.cover = { title: cv.title || '', report_no: cv.report_no || '', date: cv.date || '', client: cv.client || '',
               revision: '', prepared_by: '', checked_by: '', ref: '' };
-  S.short = r.cover.short;
+  S.short = cv.short || '';
   const st = S.status.settings, saved = loadSaved();
   S.fos = saved.fos || st.fos; S.fosText = String(S.fos); S.units = saved.units || st.units;
   S.showUtil = saved.showUtil !== undefined ? saved.showUtil : st.show_utilisation;
@@ -485,9 +513,9 @@ function startReview(r) {
   S.meshStats = { type: '', elements: '', nodes: '', size: '', skew_avg: '', skew_max: '', oq_min: '' };
   S.assumed = {}; S.assumeCustom = '';
   S.layouts = { results: 'auto', geometry: 'auto', bc: 'auto', extras: 'auto' };
-  S.geometry = r.geometry.map(g => ({ id: g.id, heading: g.heading, caption: '', parent: g.parent || null, attach: !!g.attach }));
-  S.meshes = r.meshes.map(g => ({ id: g.id, heading: g.heading, caption: '', parent: g.parent || null, attach: !!g.attach }));
-  S.cases = r.cases.map(newCase);
+  S.geometry = (r.geometry || []).map(g => ({ id: g.id, heading: g.heading, caption: '', parent: g.parent || null, attach: !!g.attach }));
+  S.meshes = (r.meshes || []).map(g => ({ id: g.id, heading: g.heading, caption: '', parent: g.parent || null, attach: !!g.attach }));
+  S.cases = (r.cases || []).map(newCase);
   S.matchPending = new Set(r.match_pending || []);
   S.haveSession = true;
   show('review');
@@ -543,18 +571,35 @@ function readSummary(i) {
   return bits.join('  \u00b7  ');
 }
 
+function safePart(name, fn) {
+  // a card that chokes on one odd picture must never take the whole page with it
+  try { return fn(); }
+  catch (e) {
+    console.error('card failed:', name, e);
+    return card('', `One card could not be shown (${name})`,
+      h('div', {}, 'The rest of the page works. This card failed: ', h('b', {}, e.message),
+        ' - please send a screenshot of this message; nothing you typed is lost.'));
+  }
+}
+
 function renderReview() {
   const root = $('#s-review');
   // the preview is the LAST card: you work top to bottom and look at the report when you ask for it (council item U3)
-  const parts = [introCard(), checksCard(), picturesCard(), coverCard(), materialCard(), layoutCard(), geometryCard(), assumptionsCard()];
-  if (S.cases.length) S.cases.forEach((c, k) => parts.push(caseCard(c, k)));
+  const parts = [safePart('intro', introCard), safePart('checks', checksCard), safePart('pictures', picturesCard),
+                 safePart('cover', coverCard), safePart('material', materialCard), safePart('layouts', layoutCard),
+                 safePart('geometry', geometryCard), safePart('assumptions', assumptionsCard)];
+  if (S.cases.length) S.cases.forEach((c, k) => parts.push(safePart('case ' + (k + 1), () => caseCard(c, k))));
   else parts.push(card('7', 'Load cases', 'No load case found. Use the pictures table above to say which pictures are setup, deformation and stress pictures.'));
-  parts.push(previewCard());
+  parts.push(safePart('preview', previewCard));
   const dl = h('div', { hidden: true });
   for (const k of HIST_KEYS) dl.append(h('datalist', { id: 'dl-' + k }, hist(k).map(v => h('option', { value: v }))));
   parts.push(dl);
   root.replaceChildren(...parts);
-  renderChecks(); renderVerdicts(); renderHint(); refreshAllowable(); renderLayoutCard(); renderBasisBoxes(); updateNeeds(); renderPreview();
+  for (const [nm, fn] of [['checks', renderChecks], ['verdicts', renderVerdicts], ['hint', renderHint],
+                          ['allowable', refreshAllowable], ['layoutcard', renderLayoutCard], ['basis', renderBasisBoxes],
+                          ['needs', updateNeeds], ['preview', renderPreview]]) {
+    try { fn(); } catch (e) { console.error('render', nm, e); }
+  }
 }
 
 function introCard() {

@@ -162,6 +162,19 @@ def _same_origin_only():
     return None
 
 
+def _uploaded_pictures():
+    """the multipart 'files' parts that are really pictures (a part without a file name is not a picture)"""
+    out, nameless = [], 0
+    for f in request.files.getlist("files"):
+        if not f:
+            continue
+        if not f.filename:
+            nameless += 1
+            continue
+        out.append(f)
+    return out, nameless
+
+
 # ───────────────────────────────────────────── helpers ─────────────────────────────────────────────
 def to_float(v):
     if v is None:
@@ -277,11 +290,27 @@ def _start_matcher(sid, ids):
 
 
 # ───────────────────────────────────────────── pages & status ─────────────────────────────────────────────
+_STATIC_TAG = {}
+
+
+def static_tag(name: str) -> str:
+    """content hash in the URL: a browser tab can never run yesterday's app.js against today's program"""
+    path = Path(app.static_folder) / name
+    try:
+        mtime = path.stat().st_mtime_ns
+    except OSError:
+        return VERSION
+    hit = _STATIC_TAG.get(name)
+    if not hit or hit[0] != mtime:
+        hit = _STATIC_TAG[name] = (mtime, f"{VERSION}-{hashlib.md5(path.read_bytes()).hexdigest()[:10]}")
+    return hit[1]
+
+
 @app.get("/")
 def index():
     html = (Path(app.static_folder) / "index.html").read_text(encoding="utf-8")
     for name in ("app.js", "style.css"):                              # a new version never uses an old, cached file
-        html = html.replace(f'/static/{name}"', f'/static/{name}?v={VERSION}"')
+        html = html.replace(f'/static/{name}"', f'/static/{name}?v={static_tag(name)}"')
     resp = app.response_class(html, mimetype="text/html")
     resp.headers["Cache-Control"] = "no-store"
     return resp
@@ -315,9 +344,11 @@ def _new_session():
 
 @app.post("/api/analyze")
 def api_analyze():
-    files = [f for f in request.files.getlist("files") if f and f.filename]
+    files, nameless = _uploaded_pictures()
     if not files:
-        raise UserError("No pictures received.")
+        raise UserError("The list arrived but the pictures themselves did not (a part without a file name is not a "
+                        "picture). This is usually an OLD tab: reload the page once (Ctrl+R), add the pictures again "
+                        "and press Next." if nameless else "No pictures received.")
     sid, folder = _new_session()
     paths, names, skipped = [], [], []
     for f in files:
