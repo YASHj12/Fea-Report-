@@ -1269,7 +1269,7 @@ function previewCard() {
   missing.addEventListener('change', () => { S.missing = missing.value; saveSaved(); scheduleBuild(150); scheduleSave(); });
   return h('section', { class: 'card pv', id: 'pv-card' },
     h('div', { class: 'pv-head' }, h('h2', {}, 'Report preview'),
-      h('span', { class: 'pv-status busy', id: 'pv-status' }, h('i'), h('span', { id: 'pv-status-text' }, 'Preparing ...')),
+      h('span', { class: 'pv-status wait', id: 'pv-status' }, h('i'), h('span', { id: 'pv-status-text' }, 'Preparing ...')),
       h('button', { class: 'primary', type: 'button', id: 'pv-refresh', onclick: () => buildNow().catch(() => {}) }, ico('refresh'), h('span', { id: 'pv-refresh-lbl' }, 'Build the preview')),
       h('button', { class: 'secondary', type: 'button', id: 'pv-full', onclick: openSlideBox }, ico('expand'), 'Full screen')),
     h('p', { class: 'sub' }, 'This is your real report, drawn from the PowerPoint file that is built from what you typed above. ',
@@ -1290,8 +1290,9 @@ function renderPreview() {
   const card = $('#pv-card'); if (!card) return;
   const B = S.build, n = B.slides.length, has = !!(B.key && n);
   const stale = has && (B.status === 'stale' || B.status === 'building');
-  const MAP = { idle: ['busy', 'Not built yet - press "Build the preview"'], building: ['busy', has ? 'Updating the preview ...' : 'Building the preview ...'],
-                stale: ['busy', 'Out of date - press "Update preview"'],
+  // NOTE: never 'busy' here - .busy is the FULL-SCREEN waiting overlay; on the chip it would cover the whole page
+  const MAP = { idle: ['wait', 'Not built yet - press "Build the preview"'], building: ['wait', has ? 'Updating the preview ...' : 'Building the preview ...'],
+                stale: ['wait', 'Out of date - press "Update preview"'],
                 ok: ['ok', 'Preview is up to date'], error: ['bad', 'The preview could not be made'] };
   const [cls, text] = MAP[B.status] || MAP.idle;
   $('#pv-status').className = 'pv-status ' + cls; $('#pv-status-text').textContent = text;

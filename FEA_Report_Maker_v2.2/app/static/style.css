@@ -254,7 +254,9 @@ details.wording .in { padding: 14px; display: grid; gap: 12px; }
 .pv-status { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 12px; border-radius: 99px; background: #eef1f5; color: #4a5560; font-weight: 600; }
 .pv-status i { width: 9px; height: 9px; border-radius: 50%; background: #9aa3ad; }
 .pv-status.ok { background: var(--ok-bg); color: var(--ok); } .pv-status.ok i { background: var(--ok); }
-.pv-status.busy { background: var(--info-bg); color: var(--info); } .pv-status.busy i { background: var(--info); animation: pvp 1s ease-in-out infinite; }
+.pv-status.busy, .pv-status.wait { background: var(--info-bg); color: var(--info); }
+.pv-status.busy i, .pv-status.wait i { background: var(--info); animation: pvp 1s ease-in-out infinite; }
+/* the chip modifier is 'wait'; the class 'busy' belongs to the full-screen overlay only (round-7 red-team find) */
 .pv-status.bad { background: var(--bad-bg); color: var(--bad); } .pv-status.bad i { background: var(--bad); }
 @keyframes pvp { 50% { opacity: .25; } }
 .pv-stage { position: relative; margin-top: 12px; background: #e6ebf1; border-radius: 10px; padding: 16px; display: grid; place-items: center; }

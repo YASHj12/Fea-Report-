@@ -228,6 +228,11 @@ def main():
     check("U1b the background pass places the view", bool(got) and got["matches"][str(zid)]["match"]["score"] > 0.7,
           str(got)[:200])
 
+    # ── U3b: the preview status chip must never wear the full-screen overlay's class (it would cover the page) ──
+    js = (ROOT / "app" / "static" / "app.js").read_text(encoding="utf-8")
+    check("U3b the status chip never uses the overlay class 'busy'",
+          "'pv-status busy'" not in js and "idle: ['busy'" not in js and "building: ['busy'" not in js)
+
     shutil.rmtree(tmp, ignore_errors=True)
     print()
     if FAILS:
