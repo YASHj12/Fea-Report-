@@ -59,7 +59,7 @@ function roleOptions(img) {
   const viewOf = (role, vk, rk, label) => h('option', { value: `${role}|${vk}|${rk}`, selected: choiceOf(img) === `${role}|${vk}|${rk}` }, label);
   const groups = [h('optgroup', { label: 'The main pictures' },
     ROLES.filter(r => ['geometry', 'mesh', 'bc', 'deformation', 'stress'].includes(r[0]))
-      .map(([v, t]) => h('option', { value: `${v}||`, selected: choiceOf(img) === `${v}||` || (img.role === v && !img.view_kind && !img.rkind) }, t)))];
+      .map(([v, t]) => h('option', { value: `${v}||`, selected: choiceOf(img) === `${v}||` || (img.role === v && !img.view_kind) }, t)))];
   for (const [g, label] of G) {
     const ks = byGroup[g] || [];
     if (!ks.length) continue;
@@ -636,10 +636,28 @@ function localChecks() {
 }
 
 // ----- pictures table
+const REPORT_ORDER = { geometry: 0, mesh: 1, bc: 2, deformation: 3, stress: 4 };
+function reportRank(img) {
+  // the table reads like the finished report: geometry, mesh, then case by case setup, deformation,
+  // stress and that case's sections / zooms; pictures nobody has filed yet wait at the end
+  const r = img.role || 'unknown';
+  if (r === 'unused') return [9, 0];
+  if (r === 'unknown') return [8, 0];
+  if (REPORT_ORDER[r] !== undefined) return [REPORT_ORDER[r], img.case || 0];
+  if (r.startsWith('x_')) return [5, img.case || 0];
+  return [6, img.case || 0];
+}
+
 function picturesCard() {
   const rows = [];
-  S.images.forEach(img => {
+  const ordered = [...S.images].sort((a, b) => {
+    const ra = reportRank(a), rb = reportRank(b);
+    return ra[0] - rb[0] || ra[1] - rb[1] || a.id - b.id;
+  });
+  ordered.forEach(img => {
     const role = h('select', { class: 'sel', 'data-need': 'role', 'data-label': `What is ${img.name}`, 'aria-label': `What is ${img.name}` }, roleOptions(img));
+    if (![...role.options].some(o => o.selected))                 // never display a role the picture does not have
+      role.append(h('option', { value: choiceOf(img), selected: true }, img.result_kind || KIND_LABEL[img.role] || img.role));
     const isCase = CASE_ROLES.has(img.role);
     const cs = h('select', { class: 'cs', disabled: !isCase, 'data-need': isCase ? 'req' : null, 'data-label': `Load case of ${img.name}`, 'aria-label': `Load case of ${img.name}` },
       isCase && !img.case ? h('option', { value: '', selected: true }, 'Choose ...') : null,
@@ -658,8 +676,9 @@ function picturesCard() {
     rows.push(h('tr', { class: attn ? 'attn' : '' }, h('td', {}, h('div', { class: 'thwrap' }, thumb(img.id), tg)),
       h('td', { class: 'fn' }, img.name), h('td', {}, role), h('td', {}, cs), h('td', { class: 'read' }, readSummary(img))), more);
   });
-  return card('1', 'Pictures', 'I sorted your pictures like this - the load case comes from the ANSYS title block of each picture (the "i" shows what I read). ' +
-    'If one is wrong, change it here. A section or a zoom is attached to the picture it belongs to and goes on the SAME slide.',
+  return card('1', 'Pictures', 'I listed your pictures in the order the report uses them - geometry, mesh, then each load case (setup, deformation, stress, ' +
+    'and that case\'s sections and zooms); pictures nobody has filed yet wait at the end. The load case comes from the ANSYS title block of each picture ' +
+    '(the "i" shows what I read). If one is wrong, change it here. A section or a zoom is attached to the picture it belongs to and goes on the SAME slide.',
     h('div', { class: 'scroll' }, h('table', { class: 'pics' },
       h('thead', {}, h('tr', {}, ['', 'File', 'What is it?', 'Load case', 'What I read'].map(t => h('th', {}, t)))), h('tbody', {}, rows))));
 }

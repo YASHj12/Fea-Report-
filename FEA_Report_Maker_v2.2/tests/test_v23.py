@@ -123,6 +123,15 @@ def main():
     decks = {i["case"]: i["deck"] for i in fake}
     check("A3 two decks both called A stay apart", len(d["cases"]) == 2 and decks[1] != decks[2], str(decks))
 
+    # ── A2b: a file name that merely mentions "structural" / "thermal" is not a result type ──
+    r = cli.post("/api/analyze", data={"files": [(open(EX / "image-5.png", "rb"), "SETUP STRUCTURAL.png"),
+                                                 (open(EX / "image-7.png", "rb"), "thermal setup.png")]},
+                 content_type="multipart/form-data")
+    js = r.get_json()
+    check("A2b setup pictures keep role bc and no result kind",
+          all(i["role"] == "bc" and not i["rkind"] for i in js["images"]),
+          str([(i["name"], i["role"], i["rkind"]) for i in js["images"]]))
+
     # ── A4: the zoom is found inside its parent, and attached to it ──
     m = analyzer.match_region(str(EX / "image-3.png"), str(tmp / "stress_zooom_view.png"))
     check("A4 zoom located inside its parent", bool(m) and m["score"] > 0.7, str(m))

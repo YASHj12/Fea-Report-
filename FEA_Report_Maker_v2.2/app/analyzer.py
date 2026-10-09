@@ -1095,6 +1095,8 @@ def analyze_manual_one(path, idx: int, name=None, why: str = "ocr") -> dict:
     vk, tgt, rk = guess_detail_from_name(nm)
     if role in ("bc", "deformation", "stress") and vk:              # "..._section" / "..._detail": an additional view
         role = "x_" + role
+    if role in ("geometry", "mesh", "bc"):                          # a name that merely MENTIONS "structural"/"thermal"
+        rk = None                                                   # is not a result type (setup pictures are not "structural error")
     if role is None and rk:                                         # "max principal.png" -> an additional result view
         role, vk = "x_other", (vk or "")
     info = {"id": idx, "name": nm, "path": str(path), "width": W0, "height": H0, "role": role or "unknown",
